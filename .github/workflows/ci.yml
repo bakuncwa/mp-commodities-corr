@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-import-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Byte-compile every module (catches syntax errors)
+        run: python -m py_compile $(git ls-files '*.py')
+      - name: Import check (catches broken imports without needing live API keys)
+        run: |
+          python -c "import common.db, common.schema, common.seed"
+          python -c "import etl.ingest_feeds, etl.extract_and_tag, etl.ingest_macro_indicators, etl.ingest_market_data"
+          python -c "import analysis.correlation_regression"
+          python -c "import api.main, api.export"
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform init (no backend, no credentials needed)
+        working-directory: infra
+        run: terraform init -backend=false
+      - name: terraform validate
+        working-directory: infra
+        run: terraform validate
+      - name: terraform fmt check
+        working-directory: infra
+        run: terraform fmt -check -recursive

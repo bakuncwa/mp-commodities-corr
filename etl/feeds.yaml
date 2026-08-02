@@ -1,0 +1,91 @@
+# Real, individually verified RSS feeds (checked with feedparser against the live
+# URL — see the verification pass in project history). Representative, not
+# exhaustive, per the README: this list grows as more feeds are found and checked,
+# it is not meant to be a fixed/final set.
+#
+# `status: active` feeds returned entries at verification time and are polled by
+# ingest_feeds.py. `status: needs_research` feeds are categories the README calls
+# for (world_bank_group, mnc_bank) where the obvious/expected RSS endpoint no
+# longer exists publicly (World Bank's site redesign dropped its news RSS; IMF's
+# RSS paths 403/404 from this environment; major banks — JPMorgan, Citigroup,
+# HSBC, Amex — no longer expose a public newsroom RSS feed either). They're left
+# here as a to-do rather than filled with a guessed URL that would silently fail.
+
+- category: central_bank
+  name: "Federal Reserve"
+  url: "https://www.federalreserve.gov/feeds/press_all.xml"
+  status: active
+
+- category: central_bank
+  name: "European Central Bank"
+  url: "https://www.ecb.europa.eu/rss/press.html"
+  status: active
+
+- category: central_bank
+  name: "Bank of England"
+  url: "https://www.bankofengland.co.uk/rss/news"
+  status: active
+
+- category: world_bank_group
+  name: "World Bank News"
+  url: ""
+  status: needs_research
+  note: "worldbank.org dropped /en/news/all.rss and /en/news/rss (404) after a site redesign; per-topic blogs.worldbank.org/*/rss.xml feeds exist but no general news feed was found."
+
+- category: world_bank_group
+  name: "IMF News"
+  url: ""
+  status: needs_research
+  note: "imf.org/en/news/rss returns 403 and imf.org/en/rss-list/feed?category=WHATSNEW redirects to a 404 error page from this environment."
+
+- category: mnc_bank
+  name: "JPMorgan Chase Newsroom"
+  url: ""
+  status: needs_research
+  note: "No public RSS endpoint found; JPMorgan's newsroom is JS-rendered with no discoverable feed link."
+
+- category: mnc_bank
+  name: "Citigroup News"
+  url: ""
+  status: needs_research
+  note: "No public RSS endpoint found."
+
+- category: commodity_press
+  name: "Mining.com"
+  url: "https://www.mining.com/feed/"
+  status: active
+
+- category: commodity_press
+  name: "MetalMiner"
+  url: "https://agmetalminer.com/feed/"
+  status: active
+
+- category: commodity_press
+  name: "Investing.com Commodities"
+  url: "https://www.investing.com/rss/news_11.rss"
+  status: active
+
+- category: semiconductor_press
+  name: "EE Times"
+  url: "https://www.eetimes.com/feed/"
+  status: active
+
+- category: semiconductor_press
+  name: "DigiTimes"
+  url: "https://www.digitimes.com/rss/daily.xml"
+  status: active
+
+- category: semiconductor_press
+  name: "Semiconductor Engineering"
+  url: "https://semiengineering.com/feed/"
+  status: active
+
+- category: semiconductor_press
+  name: "IEEE Spectrum"
+  url: "https://spectrum.ieee.org/feeds/feed.rss"
+  status: active
+
+- category: semiconductor_press
+  name: "SEMI"
+  url: "https://www.semi.org/en/rss.xml"
+  status: active

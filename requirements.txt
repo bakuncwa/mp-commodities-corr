@@ -1,0 +1,38 @@
+# Runtime dependencies for the ETL, analysis, and API layers.
+# Pinned to major-compatible ranges rather than exact versions so patch fixes flow in.
+
+# ETL / ingestion
+feedparser>=6.0,<7
+requests>=2.31,<3
+python-dotenv>=1.0,<2
+PyYAML>=6.0,<7
+yfinance>=0.2.40,<0.3
+openpyxl>=3.1,<4          # reads the World Bank Pink Sheet .xlsx
+
+# LLM structured extraction
+google-genai>=0.3,<1
+
+# Data / stats
+pandas>=2.1,<3
+numpy>=1.26,<2
+pingouin>=0.5.4,<0.6
+duckdb>=1.0,<2            # local stand-in for BigQuery during development
+
+# API
+fastapi>=0.111,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.6,<3
+
+# Export
+reportlab>=4.1,<5
+
+# GCP (used once DB_BACKEND=bigquery is selected; optional for local dev)
+google-cloud-bigquery>=3.25,<4
+google-cloud-storage>=2.16,<3
+db-dtypes>=1.2,<2  # required by google-cloud-bigquery's to_dataframe()
+
+# Notebooks (notebooks/*.ipynb — run each ETL/analysis step interactively)
+jupyterlab>=4.2,<5
+ipykernel>=6.29,<7
+matplotlib>=3.8,<4
+scikit-learn>=1.4,<2  # LassoCV feature selection + LogisticRegression predictive classifier, both in 02_correlation_regression.ipynb

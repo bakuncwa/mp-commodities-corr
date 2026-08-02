@@ -1,0 +1,7 @@
+{
+  "hosting": {
+    "site": "mp-commodities-corr",
+    "public": "frontend",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+  }
+}
