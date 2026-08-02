@@ -1,0 +1,39 @@
+# Points at etl/mock_rss_server.py instead of real news sites — used only to
+# simulate more ingestion volume for local testing (dedup, extraction,
+# correlation at scale) than the ~11 real active feeds in feeds.yaml give.
+# Selected via USE_LOCAL_FEEDS=true (see ingest_feeds.py's load_feeds()), never
+# the default. Two sources below (world_bank_group, mnc_bank) simulate
+# categories that feeds.yaml marks needs_research — no working real feed was
+# found for them, so this is the only way to exercise that part of the
+# pipeline right now.
+#
+# Start the server first: python -m etl.mock_rss_server (serves on :9000)
+
+- category: central_bank
+  name: "Simulated Central Bank 1"
+  url: "http://localhost:9000/feed/sim-central-bank-1?n=30"
+  status: active
+- category: central_bank
+  name: "Simulated Central Bank 2"
+  url: "http://localhost:9000/feed/sim-central-bank-2?n=30"
+  status: active
+- category: world_bank_group
+  name: "Simulated World Bank Group"
+  url: "http://localhost:9000/feed/sim-world-bank?n=20"
+  status: active
+- category: mnc_bank
+  name: "Simulated MNC Bank"
+  url: "http://localhost:9000/feed/sim-mnc-bank-1?n=20"
+  status: active
+- category: commodity_press
+  name: "Simulated Commodity Press 1"
+  url: "http://localhost:9000/feed/sim-commodity-press-1?n=40"
+  status: active
+- category: commodity_press
+  name: "Simulated Commodity Press 2"
+  url: "http://localhost:9000/feed/sim-commodity-press-2?n=40"
+  status: active
+- category: semiconductor_press
+  name: "Simulated Semiconductor Press"
+  url: "http://localhost:9000/feed/sim-semiconductor-press-1?n=30"
+  status: active

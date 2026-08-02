@@ -1,0 +1,20 @@
+# One-off: builds and pushes the three application images Cloud Run needs.
+# Run with: gcloud builds submit --config=infra/cloudbuild-images.yaml .
+# Repo root is the build context for all three (each Dockerfile COPYs common/
+# alongside its own service directory).
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'api/Dockerfile', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api-main:latest', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'api/Dockerfile.export', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api-export:latest', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'analysis/Dockerfile', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/analysis:latest', '.']
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api-main:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/api-export:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/analysis:latest'
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _REGION: us-central1
+  _REPO: mp-commodities-corr

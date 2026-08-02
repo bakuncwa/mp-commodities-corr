@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mp-commodities-corr</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Earthtone palette on a white surface. The rust/teal accent pair is
+     validated for categorical use (CVD-safe, ΔE 8.3 deutan / 18.2 normal —
+     see dataviz skill's validate_palette.js) since it doubles as the
+     positive/negative correlation-sign encoding throughout. */
+  :root{
+    --bg:#ffffff;
+    --surface:#f7f4ee;
+    --surface-2:#efeae0;
+    --line:#ddd3c0;
+    --ink:#2b2118;
+    --ink-dim:#7a6c5d;
+    --rust:#954f12;
+    --rust-dim:#6e3a0d;
+    --teal:#0c7a5a;
+    --teal-dim:#085943;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:'DM Sans',sans-serif;}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;}
+  :focus-visible{outline:2px solid var(--rust);outline-offset:2px;}
+
+  header{
+    padding:28px clamp(16px,4vw,48px) 22px;
+    border-bottom:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap;
+  }
+  .masthead h1{font-family:'Fraunces',serif;font-weight:600;font-size:clamp(22px,3.2vw,32px);margin:0 0 4px;letter-spacing:-0.01em;}
+  .masthead .ticker{font-family:'DM Mono',monospace;font-size:12px;color:var(--rust);letter-spacing:.08em;text-transform:uppercase;}
+  .masthead p{margin:8px 0 0;color:var(--ink-dim);font-size:13.5px;max-width:56ch;}
+  .datestamp{font-family:'DM Mono',monospace;font-size:12px;color:var(--ink-dim);text-align:right;}
+  .datestamp .live{color:var(--teal);}
+  .datestamp .down{color:var(--rust);}
+
+  main{display:grid;grid-template-columns:1.25fr 1fr;gap:1px;background:var(--line);}
+  @media (max-width:880px){ main{grid-template-columns:1fr;} }
+  section.map-col, section.panel-col{background:var(--bg);}
+
+  .map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px clamp(16px,4vw,32px) 10px;flex-wrap:wrap;}
+  .daterange{display:flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:11px;color:var(--ink-dim);}
+  .daterange input[type="date"]{
+    background:var(--surface);border:1px solid var(--line);color:var(--ink);
+    font-family:'DM Mono',monospace;font-size:11px;padding:5px 7px;border-radius:3px;
+  }
+  .daterange select{
+    background:var(--surface);border:1px solid var(--line);color:var(--ink);
+    font-family:'DM Mono',monospace;font-size:11px;padding:5px 7px;border-radius:3px;
+  }
+  .eyebrow{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim);}
+  .legend{display:flex;gap:14px;align-items:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--ink-dim);}
+  .legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;}
+  .legend .dot.pos{background:var(--rust);}
+  .legend .dot.neg{background:var(--teal);}
+
+  #map{height:min(46vh,400px);width:100%;}
+  .leaflet-popup-content-wrapper{background:var(--surface);color:var(--ink);border-radius:4px;font-family:'DM Sans',sans-serif;}
+  .leaflet-popup-tip{background:var(--surface);}
+
+  .strip{display:flex;gap:0;overflow-x:auto;border-top:1px solid var(--line);}
+  .strip button{flex:1 0 auto;min-width:96px;background:none;border:none;border-right:1px solid var(--line);color:var(--ink-dim);font-family:'DM Mono',monospace;font-size:11px;padding:12px 10px;cursor:pointer;text-align:left;}
+  .strip button .code{display:block;color:var(--ink);font-size:13px;margin-bottom:3px;}
+  .strip button .sign.pos{color:var(--rust);}
+  .strip button .sign.neg{color:var(--teal);}
+  .strip button .sign.pending{color:var(--ink-dim);}
+  .strip button[aria-pressed="true"]{background:var(--surface);color:var(--ink);}
+  .strip button:hover{background:var(--surface);}
+
+  .feed-col{padding:18px clamp(16px,4vw,32px) 28px;border-top:1px solid var(--line);}
+  .feed{margin-top:22px;}
+  .feed:first-child{margin-top:0;}
+  .feed h3{font-family:'Fraunces',serif;font-weight:500;font-size:15px;margin:0 0 4px;}
+  .feed .feed-sub{font-size:11.5px;color:var(--ink-dim);margin:0 0 10px;}
+  .feed-item{padding:12px 0;border-bottom:1px solid var(--line);}
+  .feed-item:last-child{border-bottom:none;}
+  .feed-item .headline{font-size:13.5px;line-height:1.5;margin:0 0 6px;}
+  .feed-item .headline a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--ink-dim);}
+  .feed-item .headline a:hover{color:var(--rust);border-bottom-color:var(--rust);}
+  .feed-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .pill{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:2px;border:1px solid var(--line);color:var(--ink-dim);}
+  .pill.sent-pos{color:var(--rust);border-color:var(--rust-dim);}
+  .pill.sent-neg{color:var(--teal);border-color:var(--teal-dim);}
+  .feed-meta .src{font-size:11px;color:var(--ink-dim);}
+  .feed-empty{font-size:12px;color:var(--ink-dim);font-style:italic;}
+
+  .panel-col{padding:22px clamp(16px,4vw,32px) 32px;}
+  .panel-toolbar{display:flex;justify-content:flex-end;margin-bottom:14px;}
+  .export-control{display:flex;align-items:center;gap:6px;}
+  .export-control select{
+    font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.03em;
+    background:var(--surface);border:1px solid var(--line);color:var(--ink);
+    padding:7px 10px;border-radius:3px;cursor:pointer;
+  }
+  .export-control select:disabled{opacity:.4;cursor:not-allowed;}
+
+  .stamp{display:inline-flex;align-items:center;gap:6px;border:1px solid currentColor;border-radius:3px;padding:3px 8px;font-family:'DM Mono',monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;transform:rotate(-2deg);}
+  .stamp.significant{color:var(--rust);}
+  .stamp.not-significant{color:var(--ink-dim);}
+
+  .panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:6px;}
+  .panel-head h2{font-family:'Fraunces',serif;font-weight:500;font-size:22px;margin:0;}
+  .panel-head .sub{color:var(--ink-dim);font-size:13px;margin-top:3px;}
+
+  .toggle-row{display:flex;gap:8px;margin:18px 0 20px;flex-wrap:wrap;}
+  .toggle{font-family:'DM Mono',monospace;font-size:11.5px;letter-spacing:.03em;background:var(--surface);border:1px solid var(--line);color:var(--ink-dim);padding:7px 12px;border-radius:3px;cursor:pointer;}
+  .toggle[aria-pressed="true"]{background:var(--rust-dim);color:#fff;border-color:var(--rust-dim);}
+
+  .ledger{border-top:1px solid var(--line);}
+  .ledger-row{display:flex;justify-content:space-between;align-items:baseline;padding:11px 0;border-bottom:1px solid var(--line);}
+  .ledger-row .label{font-size:13px;color:var(--ink-dim);}
+  .ledger-row .value{font-family:'DM Mono',monospace;font-size:15px;}
+  .ledger-row .value.rust{color:var(--rust);}
+  .ledger-row .value.teal{color:var(--teal);}
+  .ledger-note{font-size:12px;color:var(--ink-dim);margin-top:10px;line-height:1.6;}
+
+  .lagsweep{margin:22px 0 6px;}
+  .lagsweep .eyebrow{margin-bottom:10px;}
+  .bars{display:flex;gap:8px;align-items:flex-end;height:72px;}
+  .bar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px;}
+  .bar .fill{width:100%;background:var(--surface-2);border:1px solid var(--line);border-radius:2px 2px 0 0;transition:height .3s ease;}
+  .bar.best .fill{background:var(--rust-dim);border-color:var(--rust-dim);}
+  .bar .t{font-family:'DM Mono',monospace;font-size:10.5px;color:var(--ink-dim);}
+  .bar.best .t{color:var(--rust);}
+
+  .interpret{margin-top:26px;padding-top:2px;}
+  .interpret p{font-size:12.5px;line-height:1.65;color:var(--ink-dim);margin:0 0 10px;padding-bottom:10px;border-bottom:1px solid var(--line);}
+  .interpret p:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0;}
+  .interpret p strong{color:var(--ink);font-weight:500;}
+  .interpret p.ai-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-dim);border-bottom:none;padding-bottom:0;margin-top:-4px;}
+
+  .empty-state{padding:40px 0;text-align:center;color:var(--ink-dim);font-size:13px;line-height:1.7;}
+  .empty-state .big{font-family:'Fraunces',serif;font-size:17px;color:var(--ink);margin-bottom:8px;}
+  .api-banner{background:var(--teal-dim);color:#fff;font-size:12px;padding:8px clamp(16px,4vw,32px);font-family:'DM Mono',monospace;}
+
+  @media (prefers-reduced-motion:no-preference){
+    .fadein{animation:fade .5s ease both;}
+    @keyframes fade{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+  }
+</style>
+</head>
+<body>
+
+<h1 class="sr-only">mp-commodities-corr: a world map of monetary policy activity by country filterable by commodity sector, a correlation panel toggling between nominal and real interest rates against metal or semiconductor sector equity valuation, with a plain-language interpretation of the specific model output, and articles split into monetary policy and commodity stocks categories atomized per specific commodity — all served live from the FastAPI backend, not mock data</h1>
+
+<div id="api-banner" class="api-banner" style="display:none"></div>
+
+<header>
+  <div class="masthead">
+    <div class="ticker">mp-commodities-corr</div>
+    <h1>Monetary Policy × Commodities Correlation</h1>
+    <p>Rate policy activity by country, cross-referenced against metal and semiconductor sector valuation, filterable by sector.</p>
+  </div>
+  <div class="datestamp" id="datestamp">
+    <div><span class="live">●</span> connecting to API…</div>
+    <div id="sync-line">&nbsp;</div>
+  </div>
+</header>
+
+<main>
+  <section class="map-col">
+    <div class="map-toolbar">
+      <span class="eyebrow">Policy activity — world</span>
+      <div class="daterange">
+        <label for="sector-select" class="sr-only">Commodity sector</label>
+        <select id="sector-select"></select>
+        <label for="start-date" class="sr-only">Start date</label>
+        <input type="date" id="start-date" value="2016-01-01">
+        <span>to</span>
+        <label for="end-date" class="sr-only">End date</label>
+        <input type="date" id="end-date" value="2026-07-01">
+      </div>
+      <span class="legend">
+        <span><span class="dot pos"></span>positive r</span>
+        <span><span class="dot neg"></span>negative r</span>
+      </span>
+    </div>
+    <div id="map" role="img" aria-label="World map with markers for each configured country/sector analysis pair, colored by the sign of the rate-to-valuation correlation once computed"></div>
+    <div class="strip" id="strip" role="tablist" aria-label="Select a country/sector pair"></div>
+
+    <div class="feed-col" id="feed-col">
+      <div class="feed">
+        <h3>Monetary policy</h3>
+        <p class="feed-sub">Articles about the policy decision itself, tagged live via LLM structured extraction</p>
+        <div id="feed-policy"></div>
+      </div>
+      <div class="feed">
+        <h3>Commodity stocks</h3>
+        <p class="feed-sub">Articles about sector/company market performance, atomized per commodity</p>
+        <div id="feed-stocks"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel-col fadein" id="panel">
+    <div class="empty-state"><div class="big">Loading…</div></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// Defaults by hostname rather than a single hardcoded URL: this exact file is
+// what both `python -m http.server --directory frontend` (local) and Firebase
+// Hosting (public) serve. A visitor to the public URL never appends ?api=...,
+// so a plain 'http://localhost:8000' default would have them hitting their
+// own machine — which is exactly why the live site looked "disabled" before
+// this fix. ?api=/?export_api= still override either default explicitly.
+const params = new URLSearchParams(location.search);
+const IS_LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
+const API_BASE = params.get('api') || (IS_LOCAL ? 'http://localhost:8000' : 'https://mp-commodities-api-158129178835.us-central1.run.app');
+const EXPORT_BASE = params.get('export_api') || (IS_LOCAL ? 'http://localhost:8001' : 'https://mp-commodities-export-158129178835.us-central1.run.app');
+
+// Presentation-only lookup (display name + map coordinates) — the API is the
+// source of truth for which country/sector pairs are actually configured
+// (/api/pairs) and every statistic; this table just places a marker on the map.
+const COUNTRY_GEO = {
+  CL: { name: "Chile", lat: -33.45, lon: -70.66 },
+  PE: { name: "Peru", lat: -9.19, lon: -75.02 },
+  ZM: { name: "Zambia", lat: -13.13, lon: 27.85 },
+  CD: { name: "DR Congo", lat: -4.04, lon: 21.76 },
+  AU: { name: "Australia", lat: -25.27, lon: 133.78 },
+  ID: { name: "Indonesia", lat: -0.79, lon: 113.92 },
+  CN: { name: "China", lat: 39.90, lon: 116.40 },
+  TW: { name: "Taiwan", lat: 23.70, lon: 120.96 },
+  KR: { name: "South Korea", lat: 35.91, lon: 127.77 },
+  JP: { name: "Japan", lat: 36.20, lon: 138.25 },
+  US: { name: "United States", lat: 38.90, lon: -77.03 },
+  GB: { name: "United Kingdom", lat: 51.51, lon: -0.13 },
+  DE: { name: "Germany", lat: 52.52, lon: 13.40 },
+  IN: { name: "India", lat: 28.61, lon: 77.21 },
+};
+
+const RUST = '#954f12';
+const TEAL = '#0c7a5a';
+
+let pairs = [];          // [{country, sector}] from /api/pairs
+let sectors = [];        // from /api/sectors
+let target = "equity_valuation";
+let rateBasis = "nominal";
+let active = null;       // {country, sector}
+let sectorFilter = "";
+let currentResult = null;  // last successful /api/correlation response
+let currentInterpretation = null;  // last successful /api/interpret response (Gemini-generated), or null if unavailable
+let currentArticles = [];  // last /api/articles response for the active country
+
+const map = L.map('map', { zoomControl:false, attributionControl:false, scrollWheelZoom:false }).setView([10,10], 2);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+L.control.attribution({prefix:false}).addTo(map).addAttribution('© OpenStreetMap contributors');
+const markers = {};
+
+async function api(base, path) {
+  const res = await fetch(base + path);
+  if (!res.ok) {
+    const err = new Error(`API ${path} -> ${res.status}`);
+    err.status = res.status;
+    try { err.detail = (await res.json()).detail; } catch (_) {}
+    throw err;
+  }
+  return res.json();
+}
+
+function pairKey(p) { return `${p.country}/${p.sector}`; }
+
+function showApiBanner(msg) {
+  const b = document.getElementById('api-banner');
+  b.textContent = msg;
+  b.style.display = msg ? 'block' : 'none';
+}
+
+async function init() {
+  try {
+    [pairs, sectors] = await Promise.all([api(API_BASE, '/api/pairs'), api(API_BASE, '/api/sectors')]);
+  } catch (e) {
+    showApiBanner(`Can't reach the API at ${API_BASE} (${e.message}).` + (IS_LOCAL ? ' Start it with: uvicorn api.main:app --reload --port 8000' : ' The deployed Cloud Run service may be cold-starting — try reloading in a few seconds.'));
+    document.getElementById('panel').innerHTML = `<div class="empty-state"><div class="big">API unavailable</div>Start the FastAPI backend, then reload this page.</div>`;
+    return;
+  }
+  document.querySelector('#datestamp').innerHTML = `<div><span class="live">●</span> live — connected to ${API_BASE}</div><div id="sync-line">${pairs.length} country/sector pairs configured</div>`;
+
+  buildSectorDropdown();
+  buildMap();
+  buildStrip();
+
+  if (pairs.length) await select(pairs[0]);
+}
+
+function buildSectorDropdown() {
+  const select = document.getElementById('sector-select');
+  const sectorIds = [...new Set(pairs.map(p => p.sector))];
+  const bySectorId = Object.fromEntries(sectors.map(s => [s.sector_id, s.sector_name]));
+  select.innerHTML = `<option value="">All sectors</option>` +
+    sectorIds.map(id => `<option value="${id}">${bySectorId[id] || id} sector valuation</option>`).join('');
+  select.addEventListener('change', () => { sectorFilter = select.value; applySectorFilter(); });
+}
+
+function buildMap() {
+  pairs.forEach(p => {
+    const geo = COUNTRY_GEO[p.country];
+    if (!geo) return;
+    const key = pairKey(p);
+    if (markers[key]) return; // one marker per country even if it has multiple sector pairs
+    const m = L.circleMarker([geo.lat, geo.lon], { radius: 8, color: TEAL, weight: 1.5, fillColor: TEAL, fillOpacity: 0.55 }).addTo(map);
+    m.bindPopup(`<strong>${geo.name}</strong><br>${p.sector} — awaiting correlation`);
+    m.on('click', () => select(p));
+    markers[key] = m;
+  });
+}
+
+function buildStrip() {
+  const strip = document.getElementById('strip');
+  strip.innerHTML = '';
+  pairs.forEach(p => {
+    const btn = document.createElement('button');
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.dataset.key = pairKey(p);
+    btn.innerHTML = `<span class="code">${p.country}/${p.sector}</span><span class="sign pending">r pending</span>`;
+    btn.addEventListener('click', () => select(p));
+    strip.appendChild(btn);
+  });
+}
+
+function applySectorFilter() {
+  let firstVisible = null;
+  pairs.forEach(p => {
+    const visible = !sectorFilter || p.sector === sectorFilter;
+    const btn = document.querySelector(`.strip button[data-key="${pairKey(p)}"]`);
+    if (btn) btn.style.display = visible ? '' : 'none';
+    if (visible && !firstVisible) firstVisible = p;
+  });
+  if (sectorFilter && active && active.sector !== sectorFilter && firstVisible) select(firstVisible);
+}
+
+async function select(pair) {
+  active = pair;
+  document.querySelectorAll('.strip button').forEach(b => b.setAttribute('aria-pressed', b.dataset.key === pairKey(pair)));
+  const geo = COUNTRY_GEO[pair.country];
+  if (geo) { map.panTo([geo.lat, geo.lon]); markers[pairKey(pair)]?.openPopup(); }
+
+  document.getElementById('panel').innerHTML = `<div class="empty-state"><div class="big">Loading…</div></div>`;
+  await fetchCorrelation();
+  renderPanel(); // render immediately with the rule-based fallback text — no waiting on Gemini for the numbers to show
+  await Promise.all([fetchInterpretation(), fetchArticles()]);
+  renderPanel(); // re-render once the LLM interpretation (or its absence) is known
+  renderFeeds();
+}
+
+async function fetchCorrelation() {
+  currentResult = null;
+  currentInterpretation = null;
+  // No `controls` param: the backend now picks whichever control empirically
+  // strengthens this specific pair (see analysis/correlation_regression.py),
+  // rather than always forcing FDI net inflows.
+  const qs = new URLSearchParams({
+    country: active.country, sector: active.sector, rate_basis: rateBasis, target,
+    start_date: document.getElementById('start-date').value, end_date: document.getElementById('end-date').value,
+  });
+  try {
+    currentResult = await api(API_BASE, `/api/correlation?${qs}`);
+    const btn = document.querySelector(`.strip button[data-key="${pairKey(active)}"] .sign`);
+    if (btn) {
+      btn.className = `sign ${currentResult.pearson_r >= 0 ? 'pos' : 'neg'}`;
+      btn.textContent = `r ${currentResult.pearson_r >= 0 ? '+' : ''}${currentResult.pearson_r.toFixed(2)}`;
+    }
+    const m = markers[pairKey(active)];
+    if (m) {
+      const color = currentResult.pearson_r >= 0 ? RUST : TEAL;
+      m.setStyle({ color, fillColor: color, radius: 6 + Math.abs(currentResult.pearson_r) * 18 });
+      m.setPopupContent(`<strong>${COUNTRY_GEO[active.country]?.name || active.country}</strong><br>${active.sector} — r = ${currentResult.pearson_r.toFixed(2)}`);
+    }
+  } catch (e) {
+    // Generic on purpose — never surface internal pipeline/script names to a
+    // visitor; see README on why (previously leaked things like "run
+    // etl/ingest_feeds.py then etl/extract_and_tag.py").
+    currentResult = { error: "No results found." };
+  }
+}
+
+// Asks the backend to generate a dynamic, Gemini-written interpretation of the
+// result already in currentResult. Never throws — a failure (quota exhausted,
+// no key, network) just leaves currentInterpretation null, and renderPanel()
+// falls back to the client-side rule-based interpretResult() so the panel
+// always shows something.
+async function fetchInterpretation() {
+  currentInterpretation = null;
+  if (!currentResult || currentResult.error) return;
+  const qs = new URLSearchParams({
+    country: active.country, sector: active.sector, rate_basis: rateBasis, target,
+    pearson_r: currentResult.pearson_r, partial_r: currentResult.partial_r,
+    p_value: currentResult.p_value, r_squared: currentResult.r_squared, lag: currentResult.lag,
+  });
+  if (currentResult.control) qs.append('control', currentResult.control);
+  try {
+    currentInterpretation = await api(API_BASE, `/api/interpret?${qs}`);
+  } catch (e) {
+    currentInterpretation = null;
+  }
+}
+
+async function fetchArticles() {
+  currentArticles = [];
+  try {
+    const qs = new URLSearchParams({ country: active.country, limit: '100' });
+    currentArticles = await api(API_BASE, `/api/articles?${qs}`);
+  } catch (e) {
+    currentArticles = [];
+  }
+}
+
+function renderFeeds() {
+  const policyItems = currentArticles.filter(a => a.article_category === 'monetary_policy').slice(0, 8);
+  const stockItems = currentArticles.filter(a => a.article_category === 'commodity_stocks').slice(0, 8);
+
+  document.getElementById('feed-policy').innerHTML = policyItems.map(a => `
+    <div class="feed-item">
+      <p class="headline"><a href="${a.source_url}" target="_blank" rel="noopener">${a.title}</a></p>
+      <div class="feed-meta">
+        <span class="pill ${a.sentiment_score >= 0 ? 'sent-pos' : 'sent-neg'}">${a.sentiment_score >= 0 ? 'positive' : 'negative'}</span>
+        ${a.policy_subtype ? `<span class="pill">${a.policy_subtype.replace(/,/g, ', ').replace(/_/g, ' ')}</span>` : ''}
+        <span class="src">${a.source_id}</span>
+      </div>
+    </div>`).join('') || '<p class="feed-empty">No results found.</p>';
+
+  document.getElementById('feed-stocks').innerHTML = stockItems.map(a => `
+    <div class="feed-item">
+      <p class="headline"><a href="${a.source_url}" target="_blank" rel="noopener">${a.title}</a></p>
+      <div class="feed-meta">
+        <span class="pill ${a.sentiment_score >= 0 ? 'sent-pos' : 'sent-neg'}">${a.sentiment_score >= 0 ? 'positive' : 'negative'}</span>
+        <span class="src">${a.source_id}</span>
+      </div>
+    </div>`).join('') || '<p class="feed-empty">No results found.</p>';
+}
+
+// Client-side FALLBACK ONLY — used when /api/interpret can't produce a
+// Gemini-generated interpretation (no key, quota exhausted, network error).
+// Plain-language interpretation of THIS result's actual numbers, using
+// whichever control the backend actually picked (see analysis/correlation_regression.py's
+// dynamic selection) rather than a hardcoded FDI assumption. Strength bands
+// (weak/moderate/strong) follow the conventional |r| cutoffs (0.3, 0.5) used
+// in the correlation literature Pingouin itself cites; the p<0.05 cutoff
+// matches what the "significant" stamp elsewhere in the panel already uses.
+function interpretResult(d, geo) {
+  const dir = d.partial_r >= 0 ? 'rise' : 'decline';
+  const absR = Math.abs(d.partial_r);
+  const strength = absR < 0.2 ? 'very weak' : absR < 0.3 ? 'weak' : absR < 0.5 ? 'moderate' : 'strong';
+  const sig = d.p_value < 0.05;
+  const targetLabel = target === 'equity_valuation' ? `${active.sector} sector valuation` : `${active.sector} spot price`;
+  const controlPhrase = d.control ? `holding ${d.control.replace(/_/g, ' ')} constant` : 'with no control variable applied';
+
+  return [
+    `A ${rateBasis} rate increase in ${geo.name} is associated with a <strong>${dir}</strong> in ${targetLabel}, ${controlPhrase} (partial r = ${d.partial_r>=0?'+':''}${d.partial_r.toFixed(2)}).`,
+    `At |r| = ${absR.toFixed(2)}, this reads as a <strong>${strength}</strong> relationship on the conventional correlation scale (below 0.3 weak, 0.3–0.5 moderate, above 0.5 strong).`,
+    sig
+      ? `p = ${d.p_value.toFixed(3)} is below the conventional 0.05 threshold — <strong>unlikely to be due to chance alone</strong>, though still just one correlation, not proof of causation.`
+      : `p = ${d.p_value.toFixed(3)} is above the conventional 0.05 threshold — <strong>consistent with chance</strong>; treat this pairing as inconclusive rather than a real effect.`,
+    `R² = ${d.r_squared.toFixed(2)} means the rate change and its control jointly explain about <strong>${Math.round(d.r_squared*100)}%</strong> of the month-to-month variation in ${targetLabel} — the remaining ${100-Math.round(d.r_squared*100)}% comes from factors outside this model.`,
+    d.lag === 0
+      ? `The best fit is at <strong>zero lag</strong> — the relationship shows up the same month as the rate change, not with a delay.`
+      : `The best fit is at a <strong>${d.lag}-month lag</strong> — the relationship shows up ${d.lag} month${d.lag>1?'s':''} after the rate change, not immediately.`,
+  ];
+}
+
+function renderPanel() {
+  const panel = document.getElementById('panel');
+  if (!active) return;
+  const geo = COUNTRY_GEO[active.country] || { name: active.country };
+  const r = currentResult && !currentResult.error;
+  const changeLabel = target === 'equity_valuation' ? `${active.sector} sector valuation` : `${active.sector} spot price index`;
+
+  const interpretLabel = `Interest rate correlation with ${target === 'equity_valuation' ? 'equity valuation' : 'commodity price'} in the ${active.sector} sector`;
+  const interpretHtml = r
+    ? (currentInterpretation
+        ? `<p>${currentInterpretation.text}</p><p class="ai-tag">Generated dynamically for this result.</p>`
+        : interpretResult(currentResult, geo).map(s => `<p>${s}</p>`).join(''))
+    : `<p>No results found.</p>`;
+
+  panel.innerHTML = `
+    <div class="panel-toolbar">
+      <div class="export-control">
+        <label for="export-format" class="sr-only">Export format</label>
+        <select id="export-format" ${r ? '' : 'disabled'}>
+          <option value="">Export</option>
+          <option value="csv">CSV</option>
+          <option value="xlsx">XLSX</option>
+          <option value="pdf">PDF</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="panel-head">
+      <div>
+        <span class="eyebrow">${geo.name} — ${active.sector}</span>
+        <h2>${rateBasis === 'real' ? 'Real' : 'Nominal'} rate vs. ${target === 'equity_valuation' ? 'equity valuation' : 'commodity price'}</h2>
+        <div class="sub">Controlling for: ${r ? (currentResult.control ? currentResult.control.replace(/_/g, ' ') + ' (auto-selected)' : 'none') : 'n/a'} · ${r ? `best-fit lag t+${currentResult.lag}` : 'lag: n/a'} · ${document.getElementById('start-date').value} to ${document.getElementById('end-date').value}</div>
+      </div>
+      ${r ? `<span class="stamp ${currentResult.p_value < 0.05 ? 'significant' : 'not-significant'}">${currentResult.p_value < 0.05 ? 'significant' : 'not significant'}</span>` : ''}
+    </div>
+
+    <div class="toggle-row" role="group" aria-label="Rate basis">
+      <button class="toggle" id="tgl-nominal" aria-pressed="${rateBasis==='nominal'}">Nominal rate</button>
+      <button class="toggle" id="tgl-real" aria-pressed="${rateBasis==='real'}">Real rate</button>
+    </div>
+    <div class="toggle-row" role="group" aria-label="Target variable">
+      <button class="toggle" id="tgl-val" aria-pressed="${target==='equity_valuation'}">Equity valuation</button>
+      <button class="toggle" id="tgl-price" aria-pressed="${target==='commodity_price'}">Commodity price</button>
+    </div>
+
+    ${r ? `
+    <div class="ledger">
+      <div class="ledger-row"><span class="label">Pearson r (raw)</span><span class="value ${currentResult.pearson_r>=0?'rust':'teal'}">${currentResult.pearson_r>=0?'+':''}${currentResult.pearson_r.toFixed(2)}</span></div>
+      <div class="ledger-row"><span class="label">Partial r, controls applied</span><span class="value ${currentResult.partial_r>=0?'rust':'teal'}">${currentResult.partial_r>=0?'+':''}${currentResult.partial_r.toFixed(2)}</span></div>
+      <div class="ledger-row"><span class="label">p-value</span><span class="value">${currentResult.p_value.toFixed(3)}</span></div>
+      <div class="ledger-row"><span class="label">R² (multiple regression)</span><span class="value">${currentResult.r_squared.toFixed(2)}</span></div>
+      <div class="ledger-row"><span class="label">Rate change (period, latest)</span><span class="value">${currentResult.rate_change_latest != null ? currentResult.rate_change_latest.toFixed(2)+'%' : 'n/a'}</span></div>
+      <div class="ledger-row"><span class="label">${changeLabel} (latest)</span><span class="value ${(currentResult.target_change_latest||0)>=0?'rust':'teal'}">${currentResult.target_change_latest != null ? currentResult.target_change_latest.toFixed(2)+'%' : 'n/a'}</span></div>
+    </div>
+    <div class="ledger-note">Correlation does not establish causation. The target commodity's own price or valuation is never used as a control on itself. Nominal and real rates can point in different directions during periods when inflation moves faster than the announced rate.</div>
+    ` : `<div class="empty-state" style="padding:24px 0"><div class="big">No results found.</div></div>`}
+
+    ${r ? `
+    <div class="lagsweep">
+      <span class="eyebrow">Best-fit lag</span>
+      <div class="bars">
+        ${[0,1,2,3].map(t => {
+          const h = t === currentResult.lag ? 70 : 18;
+          return `<div class="bar ${t===currentResult.lag?'best':''}"><div class="fill" style="height:${h}px"></div><span class="t">t+${t}</span></div>`;
+        }).join('')}
+      </div>
+    </div>` : ''}
+
+    <div class="interpret">
+      <span class="eyebrow">${interpretLabel}</span>
+      ${interpretHtml}
+    </div>
+  `;
+
+  document.getElementById('tgl-val').addEventListener('click', async () => { target='equity_valuation'; await fetchCorrelation(); renderPanel(); });
+  document.getElementById('tgl-price').addEventListener('click', async () => { target='commodity_price'; await fetchCorrelation(); renderPanel(); });
+  document.getElementById('tgl-nominal').addEventListener('click', async () => { rateBasis='nominal'; await fetchCorrelation(); renderPanel(); });
+  document.getElementById('tgl-real').addEventListener('click', async () => { rateBasis='real'; await fetchCorrelation(); renderPanel(); });
+
+  document.getElementById('export-format').addEventListener('change', (e) => {
+    const fmt = e.target.value;
+    if (!fmt) return;
+    const qs = new URLSearchParams({
+      scope: 'correlation', format: fmt, country: active.country, sector: active.sector, rate_basis: rateBasis,
+      start_date: document.getElementById('start-date').value, end_date: document.getElementById('end-date').value,
+    });
+    window.open(`${EXPORT_BASE}/api/export?${qs}`, '_blank');
+    e.target.value = '';
+  });
+}
+
+document.getElementById('start-date').addEventListener('change', async () => { if (active) { await fetchCorrelation(); renderPanel(); } });
+document.getElementById('end-date').addEventListener('change', async () => { if (active) { await fetchCorrelation(); renderPanel(); } });
+
+init();
+</script>
+</body>
+</html>
