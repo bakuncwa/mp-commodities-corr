@@ -1,6 +1,6 @@
 # Monetary Policy Commodities Correlation (mp-commodities-corr): AI-Driven Monetary Policy Tracker with Quantitative Correlation Analysis for Metal Commodities and Semiconductor Supply Chains
 
-**Live:** [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app) — real Cloud Run API, real BigQuery data, not a mock.
+**Live:** [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app)
 
 ---
 
@@ -83,7 +83,7 @@ Commercial terminals (Bloomberg, Refinitiv) already offer commodity and policy n
 
 ### Significance
 
-mp-commodities-corr demonstrates a generalizable pattern for building a geographically organized, continuously updated policy intelligence tool that combines qualitative news classification with adjustable quantitative statistical analysis, without provisioning always-on infrastructure — using scheduled serverless functions in place of a persistent orchestrator, a generalized indicator schema in place of one fact table per macro variable, and a proven statistics library (Pingouin) in place of hand-rolled regression code. This keeps the operating cost at zero while still supporting both structured aggregate views (the map) and quantitative analysis the user can reconfigure (the correlation panel), a combination not typically available outside paid enterprise tools.
+mp-commodities-corr demonstrates a generalizable pattern for building a geographically organized, continuously updated policy intelligence tool that combines qualitative news classification with adjustable quantitative statistical analysis, without provisioning always-on infrastructure — using scheduled serverless functions in place of a persistent orchestrator, a generalized indicator schema in place of one fact table per macro variable, and a proven statistics library (Pingouin) in place of hand-rolled regression code. This keeps the operating cost at zero while still supporting both structured aggregate views (the map) and quantitative analysis the user can reconfigure (the correlation panel).
 
 ---
 
@@ -692,8 +692,6 @@ The extraction and correlation steps are independent pipelines sharing the same 
 ---
 
 ## Results
-
-_(To be populated once the pipeline has run against live feeds and at least one full monthly indicator/valuation cycle — this section should report feed coverage, tagging accuracy on a manually reviewed sample, and the actual correlation/regression output per country/sector/control-set combination, rather than being left as a placeholder in the final repository.)_
 
 | Metric                          | Target / Method                                                |
 | --------------------------------- | ------------------------------------------------------------------ |
