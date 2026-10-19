@@ -185,7 +185,10 @@ resource "google_cloudfunctions2_function" "ingest_monthly" {
   }
 
   service_config {
-    available_memory      = "512Mi"
+    # All-country macro ingest holds ~500k indicator rows in pandas (peaked at
+    # 546 MiB); 1 GiB for a ~1 min monthly run stays inside the free tier.
+    available_memory      = "1Gi"
+    available_cpu         = "1" # gen2 requires >= 0.583 vCPU above 512 MiB
     timeout_seconds       = 540
     service_account_email = google_service_account.app.email
     environment_variables = {
