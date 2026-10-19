@@ -117,12 +117,15 @@ class BigQueryStore:
         self.client.load_table_from_dataframe(df, f"{self.project}.{self.dataset}.{staging}", job_config=load_config).result()
         on_clause = " AND ".join(f"T.{c} = S.{c}" for c in pk_cols)
         set_clause = ", ".join(f"{c} = S.{c}" for c in df.columns if c not in pk_cols)
+        # Key-only tables (the bridge tables) have nothing to update; an empty
+        # SET list is a syntax error, so they get insert-if-absent only.
+        matched = f"WHEN MATCHED THEN UPDATE SET {set_clause}" if set_clause else ""
         cols = ", ".join(df.columns)
         merge_sql = f"""
             MERGE {self._t(table)} T
             USING `{self.project}.{self.dataset}.{staging}` S
             ON {on_clause}
-            WHEN MATCHED THEN UPDATE SET {set_clause}
+            {matched}
             WHEN NOT MATCHED THEN INSERT ({cols}) VALUES ({cols})
         """
         self.client.query(merge_sql).result()
