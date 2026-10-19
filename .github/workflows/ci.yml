@@ -19,9 +19,9 @@ jobs:
         run: python -m py_compile $(git ls-files '*.py')
       - name: Import check (catches broken imports without needing live API keys)
         run: |
-          python -c "import common.db, common.schema, common.seed"
-          python -c "import etl.ingest_feeds, etl.extract_and_tag, etl.ingest_macro_indicators, etl.ingest_market_data"
-          python -c "import analysis.correlation_regression"
+          python -c "import common.db, common.schema, common.seed, common.countries"
+          python -c "import etl.ingest_feeds, etl.rule_tagger, etl.extract_and_tag, etl.ingest_macro_indicators, etl.ingest_market_data"
+          python -c "import analysis.correlation_regression, analysis.spark_job"
           python -c "import api.main, api.export"
 
   terraform-validate:

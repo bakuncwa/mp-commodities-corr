@@ -1,5 +1,5 @@
 # Slim multi-stage build — keeps this image well clear of the Artifact Registry
-# free-tier's 0.5GB ceiling (see README's Deployment & Container Hosting Cost Notes).
+# free-tier's 0.5GB ceiling (see README's Performance & Cost section).
 FROM python:3.11-slim AS builder
 WORKDIR /build
 COPY requirements.txt .

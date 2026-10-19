@@ -82,6 +82,7 @@ resource "google_bigquery_table" "fact_article" {
     { name = "published", type = "TIMESTAMP" },
     { name = "mech", type = "STRING" },
     { name = "policy_stance", type = "STRING" },
+    { name = "tagger", type = "STRING" },
   ])
 }
 

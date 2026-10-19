@@ -50,7 +50,8 @@ DDL = {
             title VARCHAR,
             published TIMESTAMP,
             mech VARCHAR,               -- comma-joined transmission-mechanism tags, LLM-inferred
-            policy_stance VARCHAR       -- contractionary / expansionary / neutral, LLM-inferred (monetary_policy articles only)
+            policy_stance VARCHAR,      -- contractionary / expansionary / neutral (monetary_policy articles only)
+            tagger VARCHAR              -- 'rules' (etl/rule_tagger.py) or 'llm' (Gemini refinement)
         )
     """,
     "fact_macro_indicator": """
@@ -148,6 +149,12 @@ DDL = {
         )
     """,
 }
+
+# Additive column changes for warehouses created before the column existed
+# (CREATE TABLE IF NOT EXISTS leaves an existing table's columns untouched).
+MIGRATIONS = [
+    "ALTER TABLE fact_article ADD COLUMN IF NOT EXISTS tagger VARCHAR",
+]
 
 # Load order respects FK-ish dependencies even though DuckDB/BigQuery don't enforce them here.
 TABLE_ORDER = [

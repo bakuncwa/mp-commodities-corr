@@ -16,6 +16,8 @@ Run: `uvicorn api.main:app --reload --port 8000`
 """
 from __future__ import annotations
 
+import os
+import time
 from datetime import date
 
 import pandas as pd
@@ -24,7 +26,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from common.db import get_store
 from common.schema import SECTORS
-from common.seed import COUNTRIES, COUNTRY_SECTOR_PAIRS
+from common.countries import ALL_COUNTRIES
+from common.seed import COUNTRIES, COUNTRY_SECTOR_PAIRS, FEATURED_PAIRS
 from analysis.correlation_regression import RATE_INDICATORS, MIN_OBS, build_country_panel, run_one, CANDIDATE_CONTROLS
 from analysis.interpret import get_or_generate_interpretation
 
@@ -38,6 +41,22 @@ VALID_SECTORS = {s[0] for s in SECTORS}
 VALID_PAIRS = set(COUNTRY_SECTOR_PAIRS)
 VALID_RATE_BASIS = {"nominal", "real"}
 VALID_TARGETS = {"equity_valuation", "commodity_price"}
+
+
+# Panels change only when the monthly ingest runs, so a per-instance TTL cache
+# turns repeat /api/correlation requests (filter toggles, date-range tweaks on
+# the same pair) from three BigQuery round-trips into a dict lookup.
+PANEL_CACHE_TTL_S = int(os.environ.get("PANEL_CACHE_TTL_S", "3600"))
+_panel_cache: dict[tuple[str, str], tuple[float, pd.DataFrame]] = {}
+
+
+def _cached_panel(store, country: str, sector: str) -> pd.DataFrame:
+    hit = _panel_cache.get((country, sector))
+    if hit and time.monotonic() - hit[0] < PANEL_CACHE_TTL_S:
+        return hit[1]
+    panel = build_country_panel(store, country, sector)
+    _panel_cache[(country, sector)] = (time.monotonic(), panel)
+    return panel
 
 
 def _require(value: str, allowed: set, field: str) -> str:
@@ -89,7 +108,7 @@ def get_correlation(
         raise HTTPException(status_code=404, detail=f"{country}/{sector} is not a configured analysis pair")
 
     store = get_store()
-    panel = build_country_panel(store, country, sector)
+    panel = _cached_panel(store, country, sector)
     if panel.empty:
         raise HTTPException(status_code=404, detail="Not enough joined data for this window yet")
     if start_date:
@@ -209,7 +228,8 @@ def get_articles(
     where_clause = f"WHERE {' AND '.join(where)}" if where else ""
     sql = f"""
         SELECT a.article_id, a.title, a.source_url, a.source_id, a.article_category,
-               a.policy_subtype, a.sentiment_score, a.sentiment_target, a.mech, a.published
+               a.policy_subtype, a.sentiment_score, a.sentiment_target, a.mech, a.published,
+               a.policy_stance, a.tagger
         FROM fact_article a
         {join_clause}
         {where_clause}
@@ -225,11 +245,45 @@ def get_sectors():
     return [{"sector_id": s[0], "sector_name": s[1], "sector_category": s[2]} for s in SECTORS]
 
 
+_pairs_cache: tuple[float, list] | None = None
+
+
 @app.get("/api/pairs")
 def get_pairs():
-    """Which country/sector combinations actually have a configured analysis pair — the frontend
-    uses this to know which map markers should be clickable/queryable."""
-    return [{"country": c, "sector": s} for c, s in COUNTRY_SECTOR_PAIRS]
+    """Pairs that have at least one stored batch result, with the latest
+    Pearson r per rate basis × target (keys like "nominal|equity_valuation") so
+    the map can colour every country without one request per pair. Featured
+    producer pairs come first. Before the first batch run, featured pairs only."""
+    global _pairs_cache
+    if _pairs_cache and time.monotonic() - _pairs_cache[0] < PANEL_CACHE_TTL_S:
+        return _pairs_cache[1]
+    df = get_store().query_df("""
+        SELECT country_code, sector_id, rate_basis, target_variable, pearson_r, p_value
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY country_code, sector_id, rate_basis, target_variable ORDER BY computed_at DESC
+            ) AS rn
+            FROM fact_correlation_result
+        ) WHERE rn = 1
+    """)
+    featured = {pair: i for i, pair in enumerate(FEATURED_PAIRS)}
+    pairs: dict[tuple[str, str], dict] = {
+        pair: {"country": pair[0], "sector": pair[1], "featured": True, "r": {}} for pair in FEATURED_PAIRS
+    }
+    for row in df.itertuples():
+        pair = (row.country_code, row.sector_id)
+        entry = pairs.setdefault(pair, {"country": pair[0], "sector": pair[1], "featured": pair in featured, "r": {}})
+        entry["r"][f"{row.rate_basis}|{row.target_variable}"] = {"r": float(row.pearson_r), "p": float(row.p_value)}
+    result = sorted(pairs.values(), key=lambda p: (featured.get((p["country"], p["sector"]), len(featured)), p["country"], p["sector"]))
+    _pairs_cache = (time.monotonic(), result)
+    return result
+
+
+@app.get("/api/geo")
+def get_geo():
+    """Static display metadata for every country: name, region, marker position."""
+    return [{"code": cc, "name": name, "region": region, "lat": lat, "lon": lon}
+            for cc, name, region, lat, lon in ALL_COUNTRIES]
 
 
 @app.get("/health")
