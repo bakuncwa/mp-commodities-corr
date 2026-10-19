@@ -94,7 +94,13 @@ def fetch_feed(feed_cfg: dict) -> tuple[list[dict], bool]:
         url = entry.get("link", "")
         if not url:
             continue
-        published = entry.get("published", "") or entry.get("updated", "")
+        # feedparser normalizes RFC-822/ISO dates to a UTC struct_time; store
+        # ISO-8601 so BigQuery's TIMESTAMP column and date_key slicing accept it.
+        parsed_time = entry.get("published_parsed") or entry.get("updated_parsed")
+        published = (
+            datetime(*parsed_time[:6], tzinfo=timezone.utc).isoformat() if parsed_time
+            else entry.get("published", "") or entry.get("updated", "")
+        )
         articles.append({
             "url": url,
             "title": entry.get("title", "").strip(),

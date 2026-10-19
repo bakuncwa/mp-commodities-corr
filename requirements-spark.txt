@@ -1,0 +1,5 @@
+# Opt-in Spark runner (analysis/spark_job.py) — needs a JDK 17 on PATH/JAVA_HOME.
+# Not installed into any deployed image; see the module docstring for when it pays off.
+-r requirements.txt
+pyspark>=3.5,<3.6
+pyarrow>=14,<18           # applyInPandas uses Arrow for the pandas <-> JVM transfer
