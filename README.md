@@ -67,7 +67,7 @@ flowchart TD
 | `etl/extract_and_tag.py` | GCS object-finalize | Pass 1: every article rule-tagged and written (`tagger='rules'`). Pass 2: queued articles refined newest-first by Gemini, 20 per call, ≤15 calls/day, overwriting with `tagger='llm'` |
 | `etl/ingest_macro_indicators.py` | (bundled below) | 11 bulk requests cover all countries: BIS ×2, WDI ×6, FRED ×3 (daily series fetched as monthly averages) |
 | `etl/ingest_macro_indicators.py` + `ingest_market_data.py` | Scheduler, monthly (one combined function, which keeps the job count within the 3-job free tier) | `fact_macro_indicator`, `fact_commodity_price`, `fact_equity_valuation` |
-| `analysis/correlation_regression.py` | Scheduler, monthly (Cloud Run job) | Append-only `fact_correlation_result` |
+| `analysis/correlation_regression.py` → `analysis/forecast.py` | Scheduler, monthly (one Cloud Run job, 2 vCPU / 2 GiB) | Append-only `fact_correlation_result` with BH *q*-values, then `fact_hike_forecast` (per-country next-month hike probability) |
 
 **Feed reliability.** Production stored 0 articles from launch to 2026-10-19, with 5,350 queued. Three causes:
 - Every Gemini call failed with `503 UNAVAILABLE` (free-tier overload), and failed attempts still consumed the 15-call daily budget.
@@ -100,6 +100,7 @@ erDiagram
   DIM_SECTOR ||--o{ BRIDGE_ARTICLE_SECTOR : maps
   DIM_SECTOR ||--o{ FACT_CORRELATION_RESULT : concerns
   DIM_COUNTRY ||--o{ FACT_CORRELATION_RESULT : concerns
+  DIM_COUNTRY ||--o{ FACT_HIKE_FORECAST : forecasts
   FACT_ARTICLE ||--o{ BRIDGE_ARTICLE_COUNTRY : tagged
   FACT_ARTICLE ||--o{ BRIDGE_ARTICLE_SECTOR : tagged
 
@@ -195,6 +196,20 @@ erDiagram
     float partial_r
     float p_value
     float r_squared
+    float q_value_bh
+    timestamp computed_at
+  }
+  FACT_HIKE_FORECAST {
+    string forecast_id PK
+    string run_id
+    string country_code FK
+    string as_of_month
+    string target_month
+    float hike_probability
+    string model
+    float cv_roc_auc
+    float base_rate
+    string drivers
     timestamp computed_at
   }
   BRIDGE_ARTICLE_COUNTRY {
@@ -207,7 +222,7 @@ erDiagram
   }
 ```
 
-`fact_correlation_result` is append-only (`computed_at`), so estimates form a time series and exports are reproducible snapshots. `fact_interpretation` caches LLM output keyed by SHA-256 of all inputs.
+`fact_correlation_result` is append-only (`computed_at`), so estimates form a time series and exports are reproducible snapshots; `q_value_bh` is the Benjamini–Hochberg *q* within the run that produced the row. `fact_hike_forecast` stores one row per country per monthly run, repeating run-level quality metrics (walk-forward ROC-AUC, base rate, JSON drivers). `fact_interpretation` caches LLM output keyed by SHA-256 of all inputs.
 
 ---
 
@@ -261,7 +276,7 @@ Effect sizes are weak (|*r*| < 0.26). For AU/lithium, empirical control selectio
 
 ### LLM layer
 
-- **Rule tagger (all articles):** dictionary classifier (Loughran & McDonald, 2011; Apel & Blix Grimaldi, 2014). Countries are matched case-sensitively, longest first, over 218 names plus central banks, capitals and sector companies, with exclusion sentinels ("Latin America", "Bank of America"). Sector lexicons are atomized per commodity. Stance is hawkish − dovish term count; sentiment is (pos − neg)/(pos + neg). It tags 445 articles in ~0.4 s.
+- **Rule tagger (all articles):** dictionary classifier (Loughran & McDonald, 2011; Apel & Blix Grimaldi, 2014). Countries are matched case-sensitively, longest first, over 218 names plus central banks, capitals and sector companies, with exclusion sentinels ("Latin America", "Bank of America"). Sector lexicons are atomized per commodity. Stance is hawkish − dovish term count; sentiment is (pos − neg)/(pos + neg). It tags 445 articles in ~0.4 s. Its main precision limit is generic policy vocabulary: tech-trade headlines mentioning "restrictions" can be tagged *market regulation*. LLM refinement corrects these, and the UI marks each article `auto` or `LLM`.
 - **LLM extraction (refinement):** category-first multi-label classification. `article_category` ∈ {monetary_policy, commodity_stocks} gates which fields are populated: `policy_subtype` for policy articles, atomized `sector_tags` for commodity articles. Also extracted: `country_codes`, `sentiment_score` ∈ [−1, 1], `policy_stance` ∈ {contractionary, expansionary, neutral} and `mechanisms`. Free-tier prompts may be used by Google for training; inputs are public news.
 - **Interpretation (`/api/interpret`):** Gemini paraphrases only the active result's statistics (direction, |partial *r*| band 0.3/0.5, *p* vs 0.05, *R*², lag). Responses are SHA-256-cached. On failure the endpoint returns `503` and the frontend falls back to a deterministic rule-based summary.
 
@@ -298,7 +313,7 @@ Policy direction is forecastable; magnitude is not, beyond a marginal gain. Tree
 | --- | --- | --- | --- |
 | Article tagging | Hardcoded lexicons (rules) first; LLM refines | Deterministic, auditable, zero marginal cost; the LLM adds nuance only where quota allows | Gemini free tier (≤15 calls/day); Cloud Functions free tier |
 | Statistical inference | Closed-form estimators, no tuning; only lag (0–3) and one control selected empirically | Small monthly samples favour low-variance estimators; closed forms are exact and cheap | One monthly Cloud Run job (seconds of vCPU) |
-| Forecasting / classification | Fitted models with time-series-CV hyperparameter search | Only where it measurably beats a benchmark (direction: AUC 0.83 vs 0.63) | Notebook-only today; a monthly batch fit would cost a few vCPU-seconds |
+| Forecasting / classification | Fitted models with time-series-CV hyperparameter search | Only where it measurably beats a benchmark (direction: AUC 0.83 vs 0.63); magnitude models stay notebook-only | Hike classifier: one monthly fit in the existing analysis job (~1 min of 2 vCPU, inside Cloud Run's free tier); scikit-learn only in the analysis image |
 | Constants | Hardcoded: `MIN_OBS = 8`, \|r\| bands 0.3/0.5, α = 0.05, budget 15/day, batch 20, TTL 3600 s | Conventions or quota arithmetic, not learnable from the data | — |
 | Storage / serving | BigQuery (partitioned `fact_article`), bulk MERGE, API TTL caches, Firebase static hosting | Fewer queries; static assets off Cloud Run | Within 10 GB storage / 1 TB query / 2M Cloud Run requests free quotas |
 
@@ -319,6 +334,8 @@ Free-tier constraints honoured: 3 Scheduler jobs, 120 Cloud Build min/day, 10 GB
 | `GET /api/forecast` | — | Latest hike-probability run: per-country *P*(hike next month), walk-forward ROC-AUC, base rate, drivers |
 | `GET /api/export` | `scope`, `format` ∈ {csv, xlsx, pdf}, filters | File of the current filtered view (separate Cloud Run service) |
 
+Frontend deep links: `?country=US&sector=semiconductors` opens a pair, `?layer=hike` opens the forecast map layer, and `?api=` overrides the backend.
+
 All query values are allowlist-validated before reaching SQL. Empty states render "No results found." without exposing internals.
 
 ---
@@ -335,6 +352,7 @@ STATS_ENGINE=pingouin make analyze           # same batch on the Pingouin refere
 make api            # :8000
 make export-api     # :8001
 make frontend       # :5500 (?api= overrides backend URL)
+make forecast       # hike probabilities only (make analyze runs it after the batch)
 
 make mock-rss && make ingest-feeds-local     # synthetic RSS volume (USE_LOCAL_FEEDS=true; never in prod)
 pip install -r requirements-spark.txt && make analyze-spark   # opt-in Spark path; needs JDK 17
@@ -354,7 +372,8 @@ etl/        feeds.yaml, ingest_feeds.py, rule_tagger.py, extract_and_tag.py, ing
 analysis/   correlation_regression.py (batch + kernels + BH q-values), forecast.py (hike classifier), spark_job.py (opt-in Spark),
             interpret.py (LLM interpretation + cache), Dockerfile
 api/        main.py (FastAPI), export.py (CSV/XLSX/PDF service), Dockerfile, Dockerfile.export
-frontend/   index.html (Bootswatch Lux, Leaflet map, correlation panel, article feed)
+frontend/   index.html (Bootswatch Lux, Leaflet world map with correlation / hike layers, correlation panel, article feed)
+images/     README demo screenshots (live production site)
 infra/      Terraform (BigQuery, Functions, Cloud Run, Scheduler, Firebase, budget), Cloud Build
 notebooks/  01_etl_pipeline.ipynb (ingest, tagging, rules-vs-LLM agreement)
             02_correlation_regression.ipynb (engines cross-check, diagnostics, Lasso, FDR correction)
@@ -362,6 +381,28 @@ notebooks/  01_etl_pipeline.ipynb (ingest, tagging, rules-vs-LLM agreement)
 ```
 
 Production inference and tagging live in `.py` modules, because Cloud Functions and Cloud Run jobs execute modules, not notebooks. Notebooks import those modules and add the exploratory ML models. Each notebook ends with APA 7 references.
+
+---
+
+## Demo
+
+Screenshots of the live site ([mp-commodities-corr.web.app](https://mp-commodities-corr.web.app)), taken 2026-10-20 against production data. Desktop views at 1440 px, the mobile view at a true 390 px viewport.
+
+**Dashboard: world correlation map and US/semiconductors panel** ([`?country=US&sector=semiconductors`](https://mp-commodities-corr.web.app/?country=US&sector=semiconductors)). Markers cover all 218 economies; colour is the sign of *r* for the active basis × target, and size is tagged-article volume.
+
+![Dashboard overview](images/01-dashboard-overview.png)
+
+| Hike-probability layer ([`?layer=hike`](https://mp-commodities-corr.web.app/?layer=hike)) | Correlation panel with FDR *q*-value |
+| --- | --- |
+| ![Hike-probability map](images/02-hike-probability-map.png) | ![Correlation panel](images/03-correlation-panel.png) |
+| Single-hue ramp: *P*(policy-rate hike in Oct 2026) per country from the random-forest classifier | *r*, partial *r*, *p*, Benjamini–Hochberg *q* across 940 tests, *R*², best-fit lag, Gemini interpretation |
+
+| Next-month rate-hike forecast | Live news feed (rules-first tagging) |
+| --- | --- |
+| ![Hike forecast](images/04-hike-forecast.png) | ![News feed](images/05-news-feed.png) |
+| US: 69%, 6.1× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
+
+<p align="center"><img src="images/06-mobile.png" alt="Mobile view at 390 px" width="320"><br><em>Mobile (390 px): stacked layout, no horizontal scroll</em></p>
 
 ---
 

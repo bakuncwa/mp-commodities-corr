@@ -223,7 +223,10 @@ async function init() {
   buildCountrySelect();
   buildFeatured();
   renderMarkers();
-  const first = pairs.find(p => p.featured && Object.keys(p.r).length) || pairs[0];
+  // ?country=US&sector=semiconductors deep-links a pair (sector optional: best result for the country).
+  const wantC = (params.get('country') || '').toUpperCase(), wantS = params.get('sector');
+  const linked = wantC && (pairs.find(p => p.country === wantC && p.sector === wantS) || representative(wantC) || pairs.find(p => p.country === wantC));
+  const first = linked || pairs.find(p => p.featured && Object.keys(p.r).length) || pairs[0];
   if (first) await select(first);
 }
 
