@@ -1,0 +1,5 @@
+# Cloud Run analysis job (analysis/Dockerfile): runtime deps plus scikit-learn
+# for analysis/forecast.py. Kept out of requirements.txt so the API image and
+# Cloud Function packages stay slim.
+-r requirements.txt
+scikit-learn>=1.4,<2

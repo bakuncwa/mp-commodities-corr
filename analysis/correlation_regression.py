@@ -164,6 +164,24 @@ def _ols_r2_np(X: np.ndarray, y: np.ndarray) -> float:
     return float(1 - (resid @ resid) / (yd @ yd))
 
 
+def bh_qvalues(p_values) -> np.ndarray:
+    """Benjamini–Hochberg (1995) q-values; NaN p-values stay NaN and are
+    excluded from the family. Same result as pg.multicomp(method='fdr_bh')."""
+    p = np.asarray(p_values, dtype=float)
+    q = np.full_like(p, np.nan)
+    ok = np.isfinite(p)
+    m = int(ok.sum())
+    if m == 0:
+        return q
+    order = np.argsort(p[ok])
+    scaled = p[ok][order] * m / np.arange(1, m + 1)
+    adjusted = np.minimum(np.minimum.accumulate(scaled[::-1])[::-1], 1.0)
+    out = np.empty(m)
+    out[order] = adjusted
+    q[ok] = out
+    return q
+
+
 def _pg():
     import pingouin as pg  # imported lazily: only the pingouin engine needs it
     return pg
@@ -339,7 +357,10 @@ def run_analysis(controls: list[str] | None = None) -> dict:
 
     if results:
         df = pd.DataFrame(results)
+        # One family per batch run: every specification tested in this run.
+        df["q_value_bh"] = bh_qvalues(df["p_value"])
         store.upsert_df("fact_correlation_result", df, ["result_id"])
+        log.info("BH-FDR: %d of %d results have q < 0.05", int((df["q_value_bh"] < 0.05).sum()), len(df))
 
     log.info("Wrote %d correlation results across %d country/sector pairs", len(results), len(COUNTRY_SECTOR_PAIRS))
     return {"results_written": len(results)}
@@ -347,3 +368,11 @@ def run_analysis(controls: list[str] | None = None) -> dict:
 
 if __name__ == "__main__":
     run_analysis()
+    # The hike forecast needs scikit-learn (analysis image only), so it is
+    # imported here rather than at module level, where api/main.py imports
+    # this module. A forecast failure must not fail the correlation batch.
+    try:
+        from analysis.forecast import run_forecast
+        run_forecast()
+    except Exception:
+        log.exception("Hike forecast failed; correlation results were still written")

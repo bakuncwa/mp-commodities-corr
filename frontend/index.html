@@ -28,6 +28,11 @@
   .lag-bars .best .fill{ background:var(--bs-primary); }
   .lag-bars small{ font-size:.7rem; letter-spacing:.05em; }
   .pair-chip .badge{ font-variant-numeric:tabular-nums; }
+  .prob-track{ position:relative; height:.6rem; background:#e9ecef; border-radius:.3rem; }
+  .prob-fill{ position:absolute; inset:0 auto 0 0; background:var(--pos); border-radius:.3rem; }
+  .prob-base{ position:absolute; top:-.25rem; bottom:-.25rem; width:2px; background:#1a1a1a; }
+  .driver-row{ display:grid; grid-template-columns:minmax(0,1fr) 40%; gap:.75rem; align-items:center; font-size:.8rem; }
+  .driver-bar{ height:.45rem; background:#c9bfae; border-radius:.2rem; }
   .feed-list{ max-height:560px; overflow-y:auto; }
   .feed-list .list-group-item a{ color:inherit; text-decoration:none; }
   .feed-list .list-group-item a:hover{ text-decoration:underline; }
@@ -58,7 +63,12 @@
     <div class="col-xl-7">
       <div class="card">
         <div class="card-header d-flex flex-wrap gap-2 align-items-center toolbar">
-          <h6 class="mb-0 me-auto w-100 w-md-auto">Policy activity — world</h6>
+          <h6 class="mb-0 me-auto">Policy activity — world</h6>
+          <div class="btn-group btn-group-sm" role="group" aria-label="Map layer">
+            <button class="btn btn-primary" data-layer="correlation">Correlation</button>
+            <button class="btn btn-outline-primary" data-layer="hike">Hike probability</button>
+          </div>
+          <div class="w-100"></div>
           <label for="sector-select" class="visually-hidden">Commodity sector</label>
           <select id="sector-select" class="form-select form-select-sm"></select>
           <label for="country-select" class="visually-hidden">Country</label>
@@ -72,11 +82,7 @@
         <div class="card-body">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
             <span class="text-uppercase small text-muted">Featured producer pairs</span>
-            <span class="small text-muted">
-              <span class="me-3"><span class="dot pos"></span>positive r</span>
-              <span class="me-3"><span class="dot neg"></span>negative r</span>
-              <span><span class="dot none"></span>no rate data · size = article volume</span>
-            </span>
+            <span class="small text-muted" id="legend"></span>
           </div>
           <div class="d-flex flex-wrap gap-2" id="featured"></div>
         </div>
@@ -139,10 +145,21 @@ let currentResult = null;
 let currentInterpretation = null;
 let currentArticles = [];
 let feedScope = '';
+let forecast = {};         // /api/forecast: {cv_roc_auc, base_rate, drivers, target_month, countries: {cc: {p, as_of, target}}}
+let mapLayer = params.get('layer') === 'hike' ? 'hike' : 'correlation';  // ?layer=hike deep-links the forecast view
+const INDICATOR_LABEL = {
+  policy_rate: 'Own policy-rate changes', cpi_inflation: 'CPI inflation', unemployment_rate: 'Unemployment',
+  reer: 'Real effective exchange rate', fed_funds_rate_global: 'US Fed funds rate',
+  usd_index: 'US dollar index', treasury_yield_10y: 'US 10-year yield',
+};
 
 document.getElementById('end-date').value = new Date().toISOString().slice(0, 10);
 
-const map = L.map('map', { zoomControl: false, attributionControl: false, scrollWheelZoom: false, worldCopyJump: true }).setView([18, 10], 2);
+// Fit every inhabited continent (fractional zoom), so no region starts off-screen.
+const WORLD = L.latLngBounds([-47, -168], [72, 178]);
+const map = L.map('map', { zoomControl: false, attributionControl: false, scrollWheelZoom: false, worldCopyJump: true, zoomSnap: 0.25 });
+map.fitBounds(WORLD);
+window.addEventListener('resize', () => map.fitBounds(WORLD));
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 6 }).addTo(map);
 L.control.attribution({ prefix: false }).addTo(map).addAttribution('© OpenStreetMap contributors');
 L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -153,6 +170,13 @@ const sectorName = id => (sectors.find(s => s.sector_id === id) || {}).sector_na
 const countryName = cc => (geo[cc] || {}).name || cc;
 const fmtR = r => `${r >= 0 ? '+' : ''}${r.toFixed(2)}`;
 const specKey = () => `${rateBasis}|${target}`;
+const fmtMonth = ym => ym ? new Date(`${ym}-01T00:00:00Z`).toLocaleString('en', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
+const pct = x => `${Math.round(x * 100)}%`;
+// Single-hue sequential ramp (light -> rust) for probabilities: lightness carries the value.
+function probColor(p) {
+  const a = [243, 233, 223], b = [149, 79, 18];
+  return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * Math.min(1, Math.max(0, p)))).join(',')})`;
+}
 
 async function api(base, path) {
   const res = await fetch(base + path);
@@ -184,6 +208,14 @@ async function init() {
   }
   geo = Object.fromEntries(geoList.map(g => [g.code, g]));
   activity = Object.fromEntries(countries.map(c => [c.country_code, c.article_count]));
+  try { forecast = await api(API_BASE, '/api/forecast'); } catch (e) { forecast = {}; }
+  const paintLayerButtons = () => document.querySelectorAll('[data-layer]').forEach(x => x.className = `btn ${x.dataset.layer === mapLayer ? 'btn-primary' : 'btn-outline-primary'}`);
+  paintLayerButtons();
+  document.querySelectorAll('[data-layer]').forEach(b => b.addEventListener('click', () => {
+    mapLayer = b.dataset.layer;
+    paintLayerButtons();
+    renderMarkers();
+  }));
   const nCountries = new Set(pairs.filter(p => Object.keys(p.r).length).map(p => p.country)).size;
   document.getElementById('status').innerHTML = `<span class="dot neg"></span>live · ${nCountries} countries · ${pairs.length} pairs`;
 
@@ -247,19 +279,37 @@ function buildFeatured() {
   });
 }
 
+function renderLegend() {
+  const size = '<span><span class="dot none"></span>no data · size = article volume</span>';
+  document.getElementById('legend').innerHTML = mapLayer === 'hike'
+    ? `<span class="me-3">P(hike in ${esc(fmtMonth(forecast.target_month))}):</span>` +
+      [0.1, 0.5, 0.9].map(p => `<span class="me-2"><span class="dot" style="background:${probColor(p)}"></span>${pct(p)}</span>`).join('') + size
+    : `<span class="me-3"><span class="dot pos"></span>positive r</span><span class="me-3"><span class="dot neg"></span>negative r</span>${size}`;
+}
+
 function renderMarkers() {
+  renderLegend();
   markerLayer.clearLayers();
-  const codes = new Set([...pairs.map(p => p.country), ...Object.keys(activity)]);
+  const codes = Object.keys(geo);  // every economy; those without data are drawn as small grey dots
   const maxAct = Math.max(1, ...Object.values(activity));
   codes.forEach(cc => {
     const g = geo[cc];
     if (!g) return;
     const rep = representative(cc);
     const v = rep && rep.r[specKey()];
-    const color = v ? (v.r >= 0 ? POS : NEG) : NONE;
-    const radius = 4 + 12 * Math.sqrt((activity[cc] || 0) / maxAct);
-    const m = L.circleMarker([g.lat, g.lon], { radius, color, weight: 1.5, fillColor: color, fillOpacity: v ? 0.6 : 0.3 }).addTo(markerLayer);
-    const stat = v ? `${esc(sectorName(rep.sector))}: r = ${fmtR(v.r)} (p = ${v.p.toFixed(3)})` : 'no policy-rate series';
+    const f = (forecast.countries || {})[cc];
+    const radius = (activity[cc] ? 4 : 2.5) + 12 * Math.sqrt((activity[cc] || 0) / maxAct);
+    let color, stat, has;
+    if (mapLayer === 'hike') {
+      has = !!f;
+      color = f ? probColor(f.p) : NONE;
+      stat = f ? `P(hike in ${fmtMonth(f.target)}) = ${pct(f.p)}` : 'no forecast (no policy-rate series)';
+    } else {
+      has = !!v;
+      color = v ? (v.r >= 0 ? POS : NEG) : NONE;
+      stat = v ? `${esc(sectorName(rep.sector))}: r = ${fmtR(v.r)} (p = ${v.p.toFixed(3)}${v.q != null ? `, q = ${v.q.toFixed(3)}` : ''})` : 'no policy-rate series';
+    }
+    const m = L.circleMarker([g.lat, g.lon], { radius, color: has ? '#5a4a3a' : color, weight: 1, fillColor: color, fillOpacity: has ? 0.85 : 0.3 }).addTo(markerLayer);
     m.bindTooltip(`<strong>${esc(g.name)}</strong><br>${stat}<br>${activity[cc] || 0} tagged articles`);
     m.on('click', () => {
       const p = rep || pairs.find(x => x.country === cc);
@@ -274,7 +324,7 @@ async function select(pair) {
   document.getElementById('country-select').value = pair.country;
   buildFeatured();
   const g = geo[pair.country];
-  if (g) map.panTo([g.lat, g.lon]);
+  if (g && !map.getBounds().contains([g.lat, g.lon])) map.panTo([g.lat, g.lon]);  // keep the world view unless off-screen
   document.getElementById('panel').innerHTML = '<p class="text-muted my-5 text-center">Loading…</p>';
   await fetchCorrelation();
   renderPanel();
@@ -366,12 +416,44 @@ function interpretResult(d) {
   return [
     `A ${rateBasis} rate increase in ${esc(countryName(active.country))} is associated with a <strong>${dir}</strong> in ${targetLabel}, ${controlPhrase} (partial r = ${fmtR(d.partial_r)}).`,
     `At |r| = ${absR.toFixed(2)}, this reads as a <strong>${strength}</strong> relationship (below 0.3 weak, 0.3–0.5 moderate, above 0.5 strong).`,
-    d.p_value < 0.05
-      ? `p = ${d.p_value.toFixed(3)} is below 0.05, but the best of four lags was chosen and many country/sector pairs are tested, so read it as a lead rather than a confirmed effect.`
-      : `p = ${d.p_value.toFixed(3)} is above 0.05 — <strong>consistent with chance</strong>; treat this pairing as inconclusive.`,
+    d.p_value >= 0.05
+      ? `p = ${d.p_value.toFixed(3)} is above 0.05 — <strong>consistent with chance</strong>; treat this pairing as inconclusive.`
+      : d.q_value_bh != null && d.q_value_bh < 0.05
+        ? `p = ${d.p_value.toFixed(3)}, and it <strong>survives false-discovery-rate correction</strong> across all ${d.fdr_family_size} tested specifications (q = ${d.q_value_bh.toFixed(3)}).`
+        : `p = ${d.p_value.toFixed(3)} is below 0.05, but after correcting for the ${d.fdr_family_size || 'many'} specifications tested, q = ${d.q_value_bh != null ? d.q_value_bh.toFixed(3) : 'n/a'} — <strong>not robust</strong> to multiple testing.`,
     `R² = ${d.r_squared.toFixed(2)}: the rate change and its control jointly explain about <strong>${Math.round(d.r_squared * 100)}%</strong> of month-to-month variation in ${targetLabel}.`,
     d.lag === 0 ? 'The best fit is at <strong>zero lag</strong> — the same month as the rate change.' : `The best fit is at a <strong>${d.lag}-month lag</strong>.`,
   ];
+}
+
+// Significance after Benjamini–Hochberg correction across the batch family.
+function sigBadge(d) {
+  if (d.p_value >= 0.05) return '<span class="badge bg-light text-muted">not significant</span>';
+  if (d.q_value_bh != null && d.q_value_bh < 0.05) return '<span class="badge bg-primary" title="Survives Benjamini–Hochberg FDR correction">p < 0.05 · FDR-robust</span>';
+  return '<span class="badge bg-light text-dark border" title="p < 0.05, but q ≥ 0.05 after Benjamini–Hochberg correction">p < 0.05 · not FDR-robust</span>';
+}
+
+function hikeSection() {
+  const f = (forecast.countries || {})[active.country];
+  const name = esc(countryName(active.country));
+  if (!f) return `<div class="mt-4 pt-3 border-top"><div class="small text-muted text-uppercase mb-2">Next-month rate hike</div>
+    <p class="small text-muted mb-0">No forecast for ${name}: there is no BIS policy-rate series to learn from.</p></div>`;
+  const base = forecast.base_rate || 0;
+  const maxImp = Math.max(...(forecast.drivers || []).map(x => x.importance), 1e-9);
+  const lift = f.p / Math.max(base, 1e-9);
+  return `<div class="mt-4 pt-3 border-top">
+    <div class="d-flex justify-content-between align-items-baseline mb-2">
+      <div class="small text-muted text-uppercase">Next-month rate hike · ${esc(fmtMonth(f.target))}</div>
+      <div class="stat fs-4 ${f.p >= 0.5 ? 'pos' : ''}">${pct(f.p)}</div>
+    </div>
+    <div class="prob-track mb-1" role="img" aria-label="Hike probability ${pct(f.p)} against a base rate of ${pct(base)}">
+      <div class="prob-fill" style="width:${f.p * 100}%"></div><div class="prob-base" style="left:${base * 100}%"></div>
+    </div>
+    <div class="d-flex justify-content-between small text-muted mb-3"><span>${lift >= 1 ? `${lift.toFixed(1)}× the` : 'below the'} ${pct(base)} base rate (marker)</span><span>data through ${esc(fmtMonth(f.as_of))}</span></div>
+    <div class="small text-muted mb-2">What drives the hike signal (all countries)</div>
+    ${(forecast.drivers || []).map(x => `<div class="driver-row mb-1"><span>${esc(INDICATOR_LABEL[x.indicator] || x.indicator)}</span><div class="driver-bar" style="width:${Math.max(4, 100 * x.importance / maxImp)}%"></div></div>`).join('')}
+    <p class="small text-muted mt-2 mb-0">Random forest on six monthly lags of each indicator; out-of-sample ROC-AUC ${forecast.cv_roc_auc.toFixed(2)} (0.5 = chance). Driver bars show the drop in ROC-AUC when that indicator is shuffled.</p>
+  </div>`;
 }
 
 function statRow(label, value, cls = '') {
@@ -398,7 +480,7 @@ function renderPanel() {
         <div class="small text-muted">Control: ${d ? (d.control ? esc(d.control.replace(/_/g, ' ')) + ' (auto-selected)' : 'none') : 'n/a'} · ${d ? `best lag t+${d.lag}` : 'lag n/a'}</div>
       </div>
       <div class="d-flex flex-column align-items-end gap-2">
-        ${d ? `<span class="badge ${d.p_value < 0.05 ? 'bg-primary' : 'bg-light text-muted'}">${d.p_value < 0.05 ? 'p < 0.05' : 'not significant'}</span>` : ''}
+        ${d ? sigBadge(d) : ''}
         <div class="dropdown">
           <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" ${d ? '' : 'disabled'}>Export</button>
           <ul class="dropdown-menu dropdown-menu-end">
@@ -425,6 +507,7 @@ function renderPanel() {
         ${statRow('Pearson r (raw)', fmtR(d.pearson_r), d.pearson_r >= 0 ? 'pos' : 'neg')}
         ${statRow('Partial r (control + trend)', fmtR(d.partial_r), d.partial_r >= 0 ? 'pos' : 'neg')}
         ${statRow('p-value', d.p_value.toFixed(3))}
+        ${statRow(`q-value (BH-FDR, ${d.fdr_family_size || 'n/a'} tests)`, d.q_value_bh != null ? d.q_value_bh.toFixed(3) : 'n/a')}
         ${statRow('R² (OLS)', d.r_squared.toFixed(3))}
         ${statRow('Rate change, latest', d.rate_change_latest != null ? d.rate_change_latest.toFixed(2) + ' pp' : 'n/a')}
         ${statRow(`${esc(sec)} ${targetLabel} change, latest`, d.target_change_latest != null ? d.target_change_latest.toFixed(2) + '%' : 'n/a', (d.target_change_latest || 0) >= 0 ? 'pos' : 'neg')}
@@ -439,7 +522,8 @@ function renderPanel() {
     <div class="interpret border-start border-3 ps-3 mt-4">
       <div class="small text-muted text-uppercase mb-2">What this result says</div>
       ${interpretHtml}
-    </div>`;
+    </div>
+    ${hikeSection()}`;
 
   panel.querySelectorAll('[data-basis]').forEach(b => b.addEventListener('click', () => setSpec(b.dataset.basis, target)));
   panel.querySelectorAll('[data-target]').forEach(b => b.addEventListener('click', () => setSpec(rateBasis, b.dataset.target)));
