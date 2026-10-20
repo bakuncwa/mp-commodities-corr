@@ -23,7 +23,7 @@ from datetime import timezone
 
 import pandas as pd
 
-from analysis.correlation_regression import MIN_OBS, load_panels, run_one
+from analysis.correlation_regression import MIN_OBS, bh_qvalues, load_panels, run_one
 from common.db import get_store
 from common.seed import COUNTRY_SECTOR_PAIRS
 
@@ -86,6 +86,7 @@ def run_spark_analysis(master: str = "local[*]", write: bool = True) -> pd.DataF
 
     out["computed_at"] = pd.to_datetime(out["computed_at"]).dt.tz_localize(timezone.utc)
     out = out[RESULT_COLUMNS]
+    out["q_value_bh"] = bh_qvalues(out["p_value"])
     if write and not out.empty:
         store.upsert_df("fact_correlation_result", out, ["result_id"])
     log.info("Spark job computed %d correlation results across %d pairs (written: %s)", len(out), len(panels), write)

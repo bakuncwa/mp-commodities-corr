@@ -100,7 +100,8 @@ DDL = {
             partial_r DOUBLE,
             p_value DOUBLE,
             r_squared DOUBLE,
-            computed_at TIMESTAMP
+            computed_at TIMESTAMP,
+            q_value_bh DOUBLE           -- Benjamini–Hochberg q across the batch run's specifications
         )
     """,
     "bridge_article_country": """
@@ -139,6 +140,23 @@ DDL = {
             queued_at TIMESTAMP
         )
     """,
+    # Monthly random-forest hike probabilities (analysis/forecast.py); one
+    # run_id per batch, run-level quality metrics repeated on each row.
+    "fact_hike_forecast": """
+        CREATE TABLE IF NOT EXISTS fact_hike_forecast (
+            forecast_id VARCHAR PRIMARY KEY,
+            run_id VARCHAR,
+            country_code VARCHAR,
+            as_of_month VARCHAR,        -- latest month of features (YYYY-MM)
+            target_month VARCHAR,       -- month the hike probability refers to
+            hike_probability DOUBLE,
+            model VARCHAR,
+            cv_roc_auc DOUBLE,          -- walk-forward ROC-AUC of this run
+            base_rate DOUBLE,           -- share of training months with a hike
+            drivers VARCHAR,            -- JSON: top indicators by permutation importance
+            computed_at TIMESTAMP
+        )
+    """,
     # Tracks Gemini extraction calls actually attempted per UTC day, so
     # extract_and_tag can stop before hitting the free tier's real 20/day
     # ceiling instead of discovering it via repeated 429s.
@@ -154,6 +172,7 @@ DDL = {
 # (CREATE TABLE IF NOT EXISTS leaves an existing table's columns untouched).
 MIGRATIONS = [
     "ALTER TABLE fact_article ADD COLUMN IF NOT EXISTS tagger VARCHAR",
+    "ALTER TABLE fact_correlation_result ADD COLUMN IF NOT EXISTS q_value_bh DOUBLE",
 ]
 
 # Load order respects FK-ish dependencies even though DuckDB/BigQuery don't enforce them here.
@@ -163,6 +182,7 @@ TABLE_ORDER = [
     "fact_equity_valuation", "fact_correlation_result",
     "bridge_article_country", "bridge_article_sector",
     "fact_interpretation", "fact_extraction_queue", "dim_extraction_budget",
+    "fact_hike_forecast",
 ]
 
 SECTORS = [

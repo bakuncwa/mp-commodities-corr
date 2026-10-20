@@ -1,4 +1,4 @@
-.PHONY: setup seed ingest-feeds extract ingest-macro ingest-market analyze api export-api frontend all-local mock-rss ingest-feeds-local analyze-spark
+.PHONY: setup seed ingest-feeds extract ingest-macro ingest-market analyze api export-api frontend all-local mock-rss ingest-feeds-local analyze-spark forecast
 
 VENV := .venv/bin
 
@@ -33,6 +33,10 @@ ingest-market:
 
 analyze:
 	$(VENV)/python -m analysis.correlation_regression
+
+# Next-month hike probabilities only (also run by `make analyze` after the batch).
+forecast:
+	$(VENV)/python -m analysis.forecast
 
 # Same batch on Apache Spark (local[*]); `pip install -r requirements-spark.txt` first.
 analyze-spark:

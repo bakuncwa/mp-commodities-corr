@@ -21,7 +21,7 @@ jobs:
         run: |
           python -c "import common.db, common.schema, common.seed, common.countries"
           python -c "import etl.ingest_feeds, etl.rule_tagger, etl.extract_and_tag, etl.ingest_macro_indicators, etl.ingest_market_data"
-          python -c "import analysis.correlation_regression, analysis.spark_job"
+          python -c "import analysis.correlation_regression, analysis.spark_job, analysis.forecast"
           python -c "import api.main, api.export"
 
   terraform-validate:
