@@ -12,7 +12,7 @@ A serverless GCP application that (i) ingests and tags monetary-policy and commo
 | Candidate controls | 7 (FDI, CPI, GDP growth, unemployment, trade balance, REER, gov. debt % GDP) |
 | Lag sweep | t, t+1, t+2, t+3 (monthly) |
 | Active RSS feeds | 11 verified (central banks, commodity and semiconductor trade press) |
-| Specifications per batch | 1,308 pairs × 2 rate bases × 2 targets → 928 estimable results on current data |
+| Specifications per batch | 1,308 pairs × 2 rate bases × 2 targets → 940 estimable results (production) |
 
 ---
 
@@ -22,12 +22,12 @@ A serverless GCP application that (i) ingests and tags monetary-policy and commo
 | --- | --- |
 | Ingestion | `feedparser`, BIS / World Bank WDI / FRED / Pink Sheet APIs, `yfinance`; Cloud Functions + Cloud Scheduler |
 | NLP tagging | Deterministic dictionary tagger (`etl/rule_tagger.py`) for every article; Gemini batch refinement (20 articles/call, `response_schema`-constrained JSON, temperature 0.1, `flash` → `flash-lite` fallback) |
-| Statistics | Two engines via `STATS_ENGINE`: NumPy/SciPy closed-form kernels (default) or Pingouin (reference); identical to 3.1e-15 across 928 results |
+| Statistics | Two engines via `STATS_ENGINE`: NumPy/SciPy closed-form kernels (default) or Pingouin (reference); identical to 3.1e-15 across 928 local results |
 | ML (notebooks) | scikit-learn: ridge, lasso, elastic net, SVR/SVC, k-NN, random forest, histogram gradient boosting, MLP, logistic regression, Gaussian naive Bayes |
 | Distributed (opt-in) | Apache Spark 3.5 (`groupBy().applyInPandas`) |
 | Storage | BigQuery star schema (prod) / DuckDB, same DDL and SQL (dev); GCS raw cache, 30-day lifecycle |
 | Serving | FastAPI on Cloud Run (main + separate export service: CSV/XLSX/PDF via `openpyxl`, `reportlab`) |
-| Frontend | Bootstrap 5.3 + Bootswatch Lux, Leaflet (greyscale OSM tiles), Firebase Hosting |
+| Frontend | Bootstrap 5.3 + Bootswatch Lux, Leaflet world map (all 218 economies; correlation or hike-probability layer), Firebase Hosting |
 | IaC / CI | Terraform, Cloud Build, GitHub Actions |
 
 ---
@@ -245,7 +245,7 @@ flowchart LR
 - **Nominal vs. real rate** are separate regressors. Schischke & Rathgeber (2025) document a sign reversal in the rate–commodity response between the pre-2008 and ZLB regimes. In a ZLB regime the nominal rate is near-constant while the real rate varies. Date-window filtering supports split-sample (pre/post-2008) tests directly.
 - **Transmission channels** are tagged per article by the extractor (`mechanisms`). Each has a proxy regressor: cost of carry → `real_interest_rate`; USD channel → `usd_index`; portfolio substitution → `treasury_yield_10y`; extraction incentives → `production_volume_change` (metals only, currently NULL pending USGS ingest).
 - **Caveats:** associations are not causal. The control/lag search over 7 × 4 specifications is a specification search, and *R*² values are in-sample. FRED global series (`country_code IS NULL`) do not enter country panels.
-- **Multiplicity:** of 928 specifications, 220 (23.7%) have *p* < 0.05 against ~5% expected under the null. 54 survive Benjamini–Hochberg FDR at 5%, and 11 survive Bonferroni (`notebooks/02`, `pg.multicomp`). Most BH survivors are *real rate → nickel price at t+2* across euro members, which share one ECB rate, so they are not independent findings.
+- **Multiplicity:** of 940 specifications (production batch), 245 (26.1%) have *p* < 0.05 against ~5% expected under the null. 54 survive Benjamini–Hochberg FDR at 5%, and 11 survive Bonferroni. Each result stores its q-value, and the panel badge reports FDR-robustness (`notebooks/02`, `pg.multicomp`). Most BH survivors are *real rate → nickel price at t+2* across euro members, which share one ECB rate, so they are not independent findings.
 
 ### Representative results (local warehouse, current batch)
 
@@ -273,6 +273,8 @@ Pooled panel: 9,117 country-months, 39 countries (euro area counted once), 42 fe
 | --- | --- | --- | --- |
 | Δpolicy-rate magnitude (RMSE) | random forest 0.908 (−1.5%; Diebold–Mariano *p* = 0.03, but MAE 0.178 vs 0.148) | no-change 0.922 | k-NN −0.3%, SVR +0.1%, HistGBM +0.1%, lasso +0.3%, ridge +9.1%, MLP +12.1% |
 | Next-month hike (ROC-AUC; base rate 11.4%) | random forest 0.833 (bal. acc. 0.777) | persistence 0.625 | HistGBM 0.819, RBF-SVC 0.695, logistic 0.679, k-NN 0.599, naive Bayes 0.550 |
+
+**In production:** the hike classifier runs monthly (`analysis/forecast.py`, after the correlation batch). It uses the same random forest with publication-lag-aware features (REER enters one month later, matching its BIS release) and stores per-country probabilities, the run's walk-forward ROC-AUC, the base rate and permutation-importance drivers in `fact_hike_forecast`. The UI shows these as a map layer and a panel section. scikit-learn ships only in the analysis image.
 
 Policy direction is forecastable; magnitude is not, beyond a marginal gain. Tree ensembles dominate because rate cycles are regime-like and non-linear. SVMs cost the most compute (O(n²)) for less accuracy, and k-NN and naive Bayes fail on correlated, non-stationary lags. The MLP overfits, and LSTMs are not identifiable at *n* ≈ 230 months per country. Reinforcement learning has no applicable action/reward formulation. VAR/SVAR and local projections are the recommended next step for causal identification. `notebooks/02` also holds `LassoCV` joint control selection (α by `TimeSeriesSplit`).
 
@@ -309,11 +311,12 @@ Free-tier constraints honoured: 3 Scheduler jobs, 120 Cloud Build min/day, 10 GB
 | Endpoint | Parameters | Returns |
 | --- | --- | --- |
 | `GET /api/countries` | `start_date`, `end_date` | Per-country article count and mean sentiment (choropleth) |
-| `GET /api/correlation` | `country`, `sector`, `rate_basis`, `target`, `control?`, `start_date`, `end_date` | *r*, partial *r*, *p*, *R*², lag, control used |
+| `GET /api/correlation` | `country`, `sector`, `rate_basis`, `target`, `control?`, `start_date`, `end_date` | *r*, partial *r*, *p*, BH *q* (request swapped into the batch family), *R*², lag, control used |
 | `GET /api/interpret` | correlation inputs + statistics | Cached LLM interpretation, or `503` |
 | `GET /api/articles` | `country`, `sector`, `article_category`, dates | Tagged articles incl. `tagger` (`rules`/`llm`); the UI falls back to worldwide when a country has none |
 | `GET /api/pairs` | — | Pairs with results and their latest *r*/*p* per basis × target (map colouring) |
 | `GET /api/geo` | — | Name, region, coordinates for all 218 economies |
+| `GET /api/forecast` | — | Latest hike-probability run: per-country *P*(hike next month), walk-forward ROC-AUC, base rate, drivers |
 | `GET /api/export` | `scope`, `format` ∈ {csv, xlsx, pdf}, filters | File of the current filtered view (separate Cloud Run service) |
 
 All query values are allowlist-validated before reaching SQL. Empty states render "No results found." without exposing internals.
@@ -348,17 +351,27 @@ common/     schema.py (DDL + migrations), db.py (DuckDB/BigQuery switch), countr
             seed.py (dimensions, all pairs, 13 featured)
 etl/        feeds.yaml, ingest_feeds.py, rule_tagger.py, extract_and_tag.py, ingest_macro_indicators.py,
             ingest_market_data.py, mock_rss_server.py, feeds.local.yaml
-analysis/   correlation_regression.py (batch + kernels), spark_job.py (opt-in Spark),
+analysis/   correlation_regression.py (batch + kernels + BH q-values), forecast.py (hike classifier), spark_job.py (opt-in Spark),
             interpret.py (LLM interpretation + cache), Dockerfile
 api/        main.py (FastAPI), export.py (CSV/XLSX/PDF service), Dockerfile, Dockerfile.export
 frontend/   index.html (Bootswatch Lux, Leaflet map, correlation panel, article feed)
 infra/      Terraform (BigQuery, Functions, Cloud Run, Scheduler, Firebase, budget), Cloud Build
 notebooks/  01_etl_pipeline.ipynb (ingest, tagging, rules-vs-LLM agreement)
             02_correlation_regression.ipynb (engines cross-check, diagnostics, Lasso, FDR correction)
-            03_ml_forecasting.ipynb (regression + classification model zoo, Diebold–Mariano, sentiment classifier)
+            03_ml_forecasting.ipynb (model zoo, Diebold–Mariano, sentiment classifier, production forecaster)
 ```
 
 Production inference and tagging live in `.py` modules, because Cloud Functions and Cloud Run jobs execute modules, not notebooks. Notebooks import those modules and add the exploratory ML models. Each notebook ends with APA 7 references.
+
+---
+
+## Technical Contributions
+
+- **Data engineering.** Built a serverless GCP ETL (Cloud Functions, Cloud Scheduler, Cloud Storage → BigQuery star schema, DuckDB for local dev) covering **218 economies**. Macro ingestion was refactored from ~120 per-country calls to **11 bulk API requests** (BIS, World Bank WDI, FRED), loading **541k indicator rows**. Policy-rate coverage grew from 11 to **59 countries** by splicing the ECB rate onto euro members from each adoption date.
+- **NLP pipeline.** Restored a news feed that had stored **0 of 5,350** queued articles with a rules-first dictionary tagger plus batched Gemini refinement (20 articles/call, model fallback). Result: **5,373 articles tagged across 103 countries** and **20× LLM throughput** (15 → 300 articles/day) within the same free quota. Rules agree with the LLM on 100% of categories and 90% of sector sets.
+- **Statistical inference.** Lagged partial-correlation and OLS batch over **1,308 country × sector pairs** (940 estimable results), with empirical control selection. Closed-form NumPy kernels are **3.6× faster** than Pingouin with 3.1e-15 parity, and panel construction is **13× faster** (25.2 s → 1.9 s). Benjamini–Hochberg FDR correction, now surfaced in the UI, shows only **54 of 940** specifications survive versus 245 at raw *p* < 0.05.
+- **Machine learning.** Benchmarked 10 algorithms (regularized regression, SVM, k-NN, random forest, gradient boosting, MLP, logistic regression, naive Bayes) under walk-forward validation, with Diebold–Mariano tests. Deployed a random-forest next-month rate-hike classifier for **57 countries**: out-of-sample **ROC-AUC 0.83 vs 0.63** for persistence. It uses publication-lag-aware features, and permutation-importance drivers are shown in the UI.
+- **Platform and delivery.** FastAPI on Cloud Run with TTL caching, Terraform IaC with **zero plan drift**, canary-tested deploys, and a Bootswatch Lux frontend on Firebase Hosting (world map, hike-probability layer, export to CSV/XLSX/PDF). The whole system runs within GCP's Always Free tier.
 
 ---
 
