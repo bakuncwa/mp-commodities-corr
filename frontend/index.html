@@ -385,7 +385,7 @@ function renderPanel() {
   const targetLabel = target === 'equity_valuation' ? 'equity valuation' : 'commodity price';
   const interpretHtml = d
     ? (currentInterpretation
-        ? `<p>${esc(currentInterpretation.text)}</p><p class="small text-muted text-uppercase mb-0">Generated dynamically for this result</p>`
+        ? `<p>${esc(currentInterpretation.text)}</p>`
         : interpretResult(d).map(s => `<p>${s}</p>`).join(''))
     : '<p class="text-muted">No results found for this country, sector and window.</p>';
 
@@ -429,7 +429,6 @@ function renderPanel() {
         ${statRow(`${esc(sec)} ${targetLabel} change, latest`, d.target_change_latest != null ? d.target_change_latest.toFixed(2) + '%' : 'n/a', (d.target_change_latest || 0) >= 0 ? 'pos' : 'neg')}
       </tbody>
     </table>
-    <p class="small text-muted">Correlation is not causation. Nominal and real rates can diverge when inflation moves faster than the announced rate.</p>
 
     <div class="small text-muted text-uppercase mt-4 mb-2">Best-fit lag</div>
     <div class="lag-bars">
