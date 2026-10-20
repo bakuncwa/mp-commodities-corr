@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>mp-commodities-corr</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231a1a1a'/%3E%3Ctext x='32' y='47' font-family='Helvetica,Arial,sans-serif' font-size='44' font-weight='700' text-anchor='middle' fill='%23ffffff'%3E%24%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/lux/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
@@ -385,7 +386,7 @@ function renderPanel() {
   const targetLabel = target === 'equity_valuation' ? 'equity valuation' : 'commodity price';
   const interpretHtml = d
     ? (currentInterpretation
-        ? `<p>${esc(currentInterpretation.text)}</p><p class="small text-muted text-uppercase mb-0">Generated dynamically for this result</p>`
+        ? `<p>${esc(currentInterpretation.text)}</p>`
         : interpretResult(d).map(s => `<p>${s}</p>`).join(''))
     : '<p class="text-muted">No results found for this country, sector and window.</p>';
 
@@ -429,7 +430,6 @@ function renderPanel() {
         ${statRow(`${esc(sec)} ${targetLabel} change, latest`, d.target_change_latest != null ? d.target_change_latest.toFixed(2) + '%' : 'n/a', (d.target_change_latest || 0) >= 0 ? 'pos' : 'neg')}
       </tbody>
     </table>
-    <p class="small text-muted">Correlation is not causation. Nominal and real rates can diverge when inflation moves faster than the announced rate.</p>
 
     <div class="small text-muted text-uppercase mt-4 mb-2">Best-fit lag</div>
     <div class="lag-bars">
