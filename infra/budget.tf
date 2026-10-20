@@ -9,7 +9,9 @@ resource "google_billing_budget" "guardrail" {
   display_name    = "mp-commodities-corr free-tier guardrail"
 
   budget_filter {
-    projects = ["projects/${var.project_id}"]
+    # The Billing API stores and returns the project *number*; using the ID
+    # here produced a perpetual in-place diff on every plan.
+    projects = ["projects/${data.google_project.current.number}"]
   }
 
   amount {
