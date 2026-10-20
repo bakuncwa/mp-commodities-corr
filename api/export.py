@@ -93,8 +93,13 @@ def export(
 
     if format == "xlsx":
         buf = io.BytesIO()
+        # Excel has no timezone support: write tz-aware timestamps (computed_at,
+        # published) as naive UTC rather than failing the whole export.
+        sheet = df.copy()
+        for col in sheet.select_dtypes(include=["datetimetz"]).columns:
+            sheet[col] = sheet[col].dt.tz_convert("UTC").dt.tz_localize(None)
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="export")
+            sheet.to_excel(writer, index=False, sheet_name="export")
         buf.seek(0)
         return StreamingResponse(
             buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
