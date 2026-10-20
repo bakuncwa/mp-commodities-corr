@@ -18,6 +18,9 @@ build_one() {
   mkdir -p "$DIST/$fn"
   cp "etl/${fn}.py" "$DIST/$fn/job.py"
   cp -r common "$DIST/$fn/common"
+  # Shared etl helpers imported as `etl.<module>` (job.py itself is copied above).
+  mkdir -p "$DIST/$fn/etl"
+  cp etl/__init__.py etl/rule_tagger.py "$DIST/$fn/etl/"
   [ -f etl/feeds.yaml ] && cp etl/feeds.yaml "$DIST/$fn/feeds.yaml"
   cp requirements.txt "$DIST/$fn/requirements.txt"
   echo "functions-framework>=3.5,<4" >> "$DIST/$fn/requirements.txt"

@@ -16,6 +16,9 @@ Run: `uvicorn api.main:app --reload --port 8000`
 """
 from __future__ import annotations
 
+import json
+import os
+import time
 from datetime import date
 
 import pandas as pd
@@ -24,8 +27,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from common.db import get_store
 from common.schema import SECTORS
-from common.seed import COUNTRIES, COUNTRY_SECTOR_PAIRS
-from analysis.correlation_regression import RATE_INDICATORS, MIN_OBS, build_country_panel, run_one, CANDIDATE_CONTROLS
+from common.countries import ALL_COUNTRIES
+from common.seed import COUNTRIES, COUNTRY_SECTOR_PAIRS, FEATURED_PAIRS
+from analysis.correlation_regression import RATE_INDICATORS, MIN_OBS, bh_qvalues, build_country_panel, run_one, CANDIDATE_CONTROLS
 from analysis.interpret import get_or_generate_interpretation
 
 app = FastAPI(title="mp-commodities-corr API", version="0.1.0")
@@ -38,6 +42,22 @@ VALID_SECTORS = {s[0] for s in SECTORS}
 VALID_PAIRS = set(COUNTRY_SECTOR_PAIRS)
 VALID_RATE_BASIS = {"nominal", "real"}
 VALID_TARGETS = {"equity_valuation", "commodity_price"}
+
+
+# Panels change only when the monthly ingest runs, so a per-instance TTL cache
+# turns repeat /api/correlation requests (filter toggles, date-range tweaks on
+# the same pair) from three BigQuery round-trips into a dict lookup.
+PANEL_CACHE_TTL_S = int(os.environ.get("PANEL_CACHE_TTL_S", "3600"))
+_panel_cache: dict[tuple[str, str], tuple[float, pd.DataFrame]] = {}
+
+
+def _cached_panel(store, country: str, sector: str) -> pd.DataFrame:
+    hit = _panel_cache.get((country, sector))
+    if hit and time.monotonic() - hit[0] < PANEL_CACHE_TTL_S:
+        return hit[1]
+    panel = build_country_panel(store, country, sector)
+    _panel_cache[(country, sector)] = (time.monotonic(), panel)
+    return panel
 
 
 def _require(value: str, allowed: set, field: str) -> str:
@@ -89,7 +109,7 @@ def get_correlation(
         raise HTTPException(status_code=404, detail=f"{country}/{sector} is not a configured analysis pair")
 
     store = get_store()
-    panel = build_country_panel(store, country, sector)
+    panel = _cached_panel(store, country, sector)
     if panel.empty:
         raise HTTPException(status_code=404, detail="Not enough joined data for this window yet")
     if start_date:
@@ -119,12 +139,14 @@ def get_correlation(
             return None
         return float(value)
 
+    q_value, family_size = _fdr_q(country, sector, rate_basis, target, best["p_value"])
     latest = panel.iloc[-1]
     return {
         "country": country, "sector": sector, "rate_basis": rate_basis, "target": target,
         "control": best["control_set"] or None,
         "lag": best["lag"], "pearson_r": best["pearson_r"], "partial_r": best["partial_r"],
         "p_value": best["p_value"], "r_squared": best["r_squared"],
+        "q_value_bh": q_value, "fdr_family_size": family_size,
         "rate_change_latest": None if rate_col not in panel.columns else _clean(latest.get(rate_col)),
         "target_change_latest": _clean(latest.get(target_col)),
     }
@@ -209,7 +231,8 @@ def get_articles(
     where_clause = f"WHERE {' AND '.join(where)}" if where else ""
     sql = f"""
         SELECT a.article_id, a.title, a.source_url, a.source_id, a.article_category,
-               a.policy_subtype, a.sentiment_score, a.sentiment_target, a.mech, a.published
+               a.policy_subtype, a.sentiment_score, a.sentiment_target, a.mech, a.published,
+               a.policy_stance, a.tagger
         FROM fact_article a
         {join_clause}
         {where_clause}
@@ -225,11 +248,99 @@ def get_sectors():
     return [{"sector_id": s[0], "sector_name": s[1], "sector_category": s[2]} for s in SECTORS]
 
 
+_ttl_cache: dict[str, tuple[float, object]] = {}
+
+
+def _cached(key: str, load):
+    hit = _ttl_cache.get(key)
+    if hit and time.monotonic() - hit[0] < PANEL_CACHE_TTL_S:
+        return hit[1]
+    value = load()
+    _ttl_cache[key] = (time.monotonic(), value)
+    return value
+
+
+def _latest_results() -> pd.DataFrame:
+    """Latest batch result per country × sector × basis × target: the family
+    the map colours from and that FDR adjustment is computed over."""
+    return _cached("latest_results", lambda: get_store().query_df("""
+        SELECT country_code, sector_id, rate_basis, target_variable, pearson_r, p_value, q_value_bh
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY country_code, sector_id, rate_basis, target_variable ORDER BY computed_at DESC
+            ) AS rn
+            FROM fact_correlation_result
+        ) WHERE rn = 1
+    """))
+
+
+def _fdr_q(country: str, sector: str, rate_basis: str, target: str, p_value: float) -> tuple[float | None, int]:
+    """BH q-value for this (possibly custom-window) p-value within the batch
+    family, with the family's own result for this specification swapped out."""
+    fam = _latest_results()
+    if fam.empty or not pd.notna(p_value):
+        return None, 0
+    same = ((fam.country_code == country) & (fam.sector_id == sector)
+            & (fam.rate_basis == rate_basis) & (fam.target_variable == target))
+    p = fam.loc[~same, "p_value"].tolist() + [p_value]
+    return float(bh_qvalues(p)[-1]), len(p)
+
+
 @app.get("/api/pairs")
 def get_pairs():
-    """Which country/sector combinations actually have a configured analysis pair — the frontend
-    uses this to know which map markers should be clickable/queryable."""
-    return [{"country": c, "sector": s} for c, s in COUNTRY_SECTOR_PAIRS]
+    """Pairs that have at least one stored batch result, with the latest
+    Pearson r, p and BH q per rate basis × target (keys like
+    "nominal|equity_valuation") so the map can colour every country without
+    one request per pair. Featured producer pairs come first. Before the first
+    batch run, featured pairs only."""
+    return _cached("pairs", _build_pairs)
+
+
+def _build_pairs() -> list[dict]:
+    df = _latest_results()
+    featured = {pair: i for i, pair in enumerate(FEATURED_PAIRS)}
+    pairs: dict[tuple[str, str], dict] = {
+        pair: {"country": pair[0], "sector": pair[1], "featured": True, "r": {}} for pair in FEATURED_PAIRS
+    }
+    for row in df.itertuples():
+        pair = (row.country_code, row.sector_id)
+        entry = pairs.setdefault(pair, {"country": pair[0], "sector": pair[1], "featured": pair in featured, "r": {}})
+        entry["r"][f"{row.rate_basis}|{row.target_variable}"] = {
+            "r": float(row.pearson_r), "p": float(row.p_value),
+            "q": float(row.q_value_bh) if pd.notna(row.q_value_bh) else None,
+        }
+    return sorted(pairs.values(), key=lambda p: (featured.get((p["country"], p["sector"]), len(featured)), p["country"], p["sector"]))
+
+
+@app.get("/api/forecast")
+def get_forecast():
+    """Latest random-forest run (analysis/forecast.py): next-month hike
+    probability per country, plus the run's walk-forward ROC-AUC, hike base
+    rate and permutation-importance drivers. Empty object before the first run."""
+    def load():
+        df = get_store().query_df("""
+            SELECT country_code, as_of_month, target_month, hike_probability, model, cv_roc_auc, base_rate, drivers, computed_at
+            FROM fact_hike_forecast
+            WHERE run_id = (SELECT run_id FROM fact_hike_forecast ORDER BY computed_at DESC LIMIT 1)
+        """)
+        if df.empty:
+            return {}
+        first = df.iloc[0]
+        return {
+            "model": first.model, "cv_roc_auc": float(first.cv_roc_auc), "base_rate": float(first.base_rate),
+            "drivers": json.loads(first.drivers), "computed_at": pd.Timestamp(first.computed_at).isoformat(),
+            "target_month": df.target_month.mode().iloc[0],
+            "countries": {r.country_code: {"p": float(r.hike_probability), "as_of": r.as_of_month, "target": r.target_month}
+                          for r in df.itertuples()},
+        }
+    return _cached("forecast", load)
+
+
+@app.get("/api/geo")
+def get_geo():
+    """Static display metadata for every country: name, region, marker position."""
+    return [{"code": cc, "name": name, "region": region, "lat": lat, "lon": lon}
+            for cc, name, region, lat, lon in ALL_COUNTRIES]
 
 
 @app.get("/health")

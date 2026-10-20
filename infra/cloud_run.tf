@@ -52,6 +52,13 @@ resource "google_cloud_run_v2_service" "api_main" {
       max_instance_count = 5
     }
   }
+
+  # Fields `gcloud run services update` writes on every image roll-out
+  # (client labels, a service-level scaling block, the pinned revision name).
+  # Template autoscaling and the image stay Terraform-managed.
+  lifecycle {
+    ignore_changes = [client, client_version, scaling, template[0].revision]
+  }
 }
 
 resource "google_cloud_run_v2_service_iam_member" "api_main_public" {
@@ -93,6 +100,13 @@ resource "google_cloud_run_v2_service" "api_export" {
       min_instance_count = 0
       max_instance_count = 3
     }
+  }
+
+  # Fields `gcloud run services update` writes on every image roll-out
+  # (client labels, a service-level scaling block, the pinned revision name).
+  # Template autoscaling and the image stay Terraform-managed.
+  lifecycle {
+    ignore_changes = [client, client_version, scaling, template[0].revision]
   }
 }
 

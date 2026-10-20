@@ -20,7 +20,7 @@ from typing import Iterable
 import pandas as pd
 from dotenv import load_dotenv
 
-from common.schema import DDL, TABLE_ORDER
+from common.schema import DDL, MIGRATIONS, TABLE_ORDER
 
 load_dotenv()
 
@@ -47,6 +47,8 @@ class DuckDBStore:
         self.con = duckdb.connect(path)
         for table in TABLE_ORDER:
             self.con.execute(DDL[table])
+        for statement in MIGRATIONS:
+            self.con.execute(statement)
 
     def query_df(self, sql: str, params: dict | None = None) -> pd.DataFrame:
         return self.con.execute(sql, params or {}).fetchdf()
@@ -64,7 +66,8 @@ class DuckDBStore:
         self.con.register("_incoming", df)
         keys = ", ".join(pk_cols)
         self.con.execute(f"DELETE FROM {table} WHERE ({keys}) IN (SELECT {keys} FROM _incoming)")
-        self.con.execute(f"INSERT INTO {table} SELECT * FROM _incoming")
+        cols = ", ".join(df.columns)
+        self.con.execute(f"INSERT INTO {table} ({cols}) SELECT {cols} FROM _incoming")
         self.con.unregister("_incoming")
         return len(df)
 
@@ -114,12 +117,15 @@ class BigQueryStore:
         self.client.load_table_from_dataframe(df, f"{self.project}.{self.dataset}.{staging}", job_config=load_config).result()
         on_clause = " AND ".join(f"T.{c} = S.{c}" for c in pk_cols)
         set_clause = ", ".join(f"{c} = S.{c}" for c in df.columns if c not in pk_cols)
+        # Key-only tables (the bridge tables) have nothing to update; an empty
+        # SET list is a syntax error, so they get insert-if-absent only.
+        matched = f"WHEN MATCHED THEN UPDATE SET {set_clause}" if set_clause else ""
         cols = ", ".join(df.columns)
         merge_sql = f"""
             MERGE {self._t(table)} T
             USING `{self.project}.{self.dataset}.{staging}` S
             ON {on_clause}
-            WHEN MATCHED THEN UPDATE SET {set_clause}
+            {matched}
             WHEN NOT MATCHED THEN INSERT ({cols}) VALUES ({cols})
         """
         self.client.query(merge_sql).result()

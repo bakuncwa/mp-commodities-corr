@@ -1,15 +1,21 @@
 """
-Cloud Function equivalent: takes the raw article JSON written by ingest_feeds.py
-and calls the Gemini API once per article for structured extraction — category
-first (monetary_policy vs commodity_stocks), then country/sector/policy-subtype/
-sentiment, plus which transmission mechanism(s) the article's content actually
-discusses (used later to compute the RSS-evidence percentages the frontend
-shows per mechanism).
+Cloud Function equivalent: tags the raw article JSON written by ingest_feeds.py
+in two passes, so the feed never depends on LLM quota:
 
-Requires GEMINI_API_KEY (see .env.example). Without it, run_extraction() raises
-immediately rather than silently no-op'ing, since a missing key is a setup
-error, not an expected runtime condition — the README's fallback behaviors are
-about bad *data* (schema-invalid LLM output), not a missing credential.
+1. Every article is tagged immediately by etl/rule_tagger.py (deterministic
+   dictionaries, no API call) and written with tagger='rules'.
+2. Gemini then refines queued articles newest-first, BATCH_SIZE articles per
+   request (free tier: ~20 requests/day/model), overwriting them with
+   tagger='llm'. 503 "high demand" responses are retried with exponential
+   backoff and then sent to GEMINI_FALLBACK_MODEL, which has its own quota.
+   Articles the LLM can't reach today stay rule-tagged and queued.
+
+The LLM extracts: category first (monetary_policy vs commodity_stocks), then
+country/sector/policy-subtype/sentiment, plus which transmission mechanism(s)
+the article's content discusses.
+
+GEMINI_API_KEY (see .env.example) enables pass 2; without it, pass 1 still runs
+and the run logs that LLM refinement was skipped.
 
 Run directly against the newest raw file: `python -m etl.extract_and_tag`
 """
@@ -28,7 +34,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from common.db import get_store, new_id
+from common.db import get_store
+from etl.rule_tagger import tag as rule_tag
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -45,13 +52,19 @@ DEADLETTER_PATH = (
 )
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")  # a Google-maintained alias, not a dated snapshot — avoids repeating the gemini-2.5-flash-lite deprecation this replaced
 
-# The Gemini free tier is 20 generate_content calls/day total for this model,
-# shared with analysis/interpret.py's on-demand interpretations — observed
-# directly as 429 RESOURCE_EXHAUSTED in production once ingest_feeds ran
-# hourly. Capped below that (not at 20) to leave headroom for interpret calls
-# and manual testing; anything that doesn't fit today's budget is queued in
-# fact_extraction_queue rather than force-failed.
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
+
+# The Gemini free tier is 20 generate_content calls/day per model, shared with
+# analysis/interpret.py's on-demand interpretations. Capped below that to leave
+# headroom; every attempt (retries included) counts against it. With batching,
+# 15 calls refine up to 15 × BATCH_SIZE = 300 articles/day.
 DAILY_EXTRACTION_BUDGET = int(os.environ.get("DAILY_EXTRACTION_BUDGET", "15"))
+BATCH_SIZE = int(os.environ.get("EXTRACTION_BATCH_SIZE", "20"))
+RETRY_DELAYS_S = (10,)  # one backoff retry on 503 UNAVAILABLE, then switch to the fallback model
+MIN_SECONDS_BETWEEN_CALLS = 13  # free tier allows ~5 requests/minute
+# Stop starting new LLM batches after this long; the Cloud Function times out at
+# 540 s, and rows are written per batch, so stopping early loses nothing.
+TIME_LIMIT_S = int(os.environ.get("EXTRACTION_TIME_LIMIT_S", "420"))
 
 SECTOR_IDS = ["copper", "lithium", "nickel", "rare_earths", "cobalt", "semiconductors"]
 POLICY_SUBTYPES = ["interest_rate", "market_regulation", "export_control", "capital_controls"]
@@ -112,30 +125,64 @@ class Extraction(BaseModel):
     policy_stance: str = "neutral"
 
 
+class BatchExtraction(Extraction):
+    idx: int
+
+
 def _client():
-    from google import genai
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set (see .env.example) — required to run extraction.")
+        return None
+    from google import genai
     return genai.Client(api_key=api_key)
 
 
-def classify_and_tag(client, title: str, summary: str) -> Extraction:
-    from google.genai import types
-    prompt = EXTRACTION_PROMPT.format(
+def _published_utc(value: str | None) -> datetime | None:
+    """RSS dates arrive as RFC-822 ("Thu, 16 Jul 2026 18:00:00 GMT") or ISO-8601;
+    both become an aware UTC datetime (None if unparseable)."""
+    if not value:
+        return None
+    from email.utils import parsedate_to_datetime
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            dt = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _batch_prompt(articles: list[dict]) -> str:
+    rules = EXTRACTION_PROMPT.split("Title: {title}")[0].format(
         sectors=SECTOR_IDS, subtypes=POLICY_SUBTYPES, mechanisms=MECHANISM_IDS, stances=POLICY_STANCES,
-        title=title, summary=summary[:2000],
     )
+    items = [{"idx": i, "title": a["title"], "summary": (a.get("raw_text") or "")[:1000]} for i, a in enumerate(articles)]
+    return (rules + "Apply the rules above to EACH article below independently. Return a JSON array "
+            "with exactly one object per article, echoing its idx.\n\nArticles:\n" + json.dumps(items, ensure_ascii=False))
+
+
+def classify_batch(client, model: str, articles: list[dict]) -> dict[int, Extraction]:
+    """One generate_content call for up to BATCH_SIZE articles, constrained to
+    a list[BatchExtraction] schema. Returns {index in `articles`: Extraction}."""
+    from google.genai import types
     response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
+        model=model,
+        contents=_batch_prompt(articles),
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=Extraction,
+            response_schema=list[BatchExtraction],
             temperature=0.1,
         ),
     )
-    return Extraction.model_validate_json(response.text)
+    parsed = [BatchExtraction.model_validate(o) for o in json.loads(response.text)]
+    return {p.idx: Extraction(**p.model_dump(exclude={"idx"})) for p in parsed if 0 <= p.idx < len(articles)}
+
+
+def classify_and_tag(client, title: str, summary: str) -> Extraction:
+    """Single-article form, kept for notebooks/ad-hoc use."""
+    out = classify_batch(client, GEMINI_MODEL, [{"title": title, "raw_text": summary}])
+    return out[0]
 
 
 def _latest_raw_file() -> Path | None:
@@ -144,8 +191,8 @@ def _latest_raw_file() -> Path | None:
 
 
 def _article_id(art: dict) -> str:
-    """Stable id for queue dedup — same article seen twice (already-queued vs.
-    freshly re-ingested) collapses to one queue row rather than two."""
+    """Stable id (SHA-256 of the URL) for both fact_article and the queue, so an
+    LLM re-tag overwrites the rule-tagged row instead of duplicating it."""
     return hashlib.sha256(art["url"].encode()).hexdigest()
 
 
@@ -183,11 +230,87 @@ def _enqueue(store, articles: list[dict]) -> None:
     store.upsert_df("fact_extraction_queue", pd.DataFrame(rows), ["article_id"])
 
 
+def _id_list(ids) -> str:
+    return ", ".join(f"'{i}'" for i in ids)  # SHA-256 hex digests only, never free text
+
+
 def _dequeue(store, article_ids: list[str]) -> None:
-    if not article_ids:
-        return
-    ids = ", ".join(f"'{i}'" for i in article_ids)
-    store.execute(f"DELETE FROM fact_extraction_queue WHERE article_id IN ({ids})")
+    if article_ids:
+        store.execute(f"DELETE FROM fact_extraction_queue WHERE article_id IN ({_id_list(article_ids)})")
+
+
+def _write_tagged(store, tagged: list[tuple[dict, Extraction]], tagger: str) -> int:
+    """Upsert articles + their bridge rows. Existing bridge rows for these ids
+    are deleted first, so a re-tag replaces (not adds to) country/sector tags."""
+    import pandas as pd
+    if not tagged:
+        return 0
+    sources, articles, countries, sectors = {}, [], [], []
+    valid_sectors = set(SECTOR_IDS)
+    for art, ex in tagged:
+        article_id = _article_id(art)
+        source_id = art["source"].lower().replace(" ", "_")
+        sources[source_id] = {"source_id": source_id, "source_name": art["source"],
+                              "source_type": art["category"], "home_country_code": None}
+        published = _published_utc(art.get("published"))
+        articles.append({
+            "article_id": article_id,
+            "date_key": published.strftime("%Y-%m-%d") if published else None,
+            "source_id": source_id,
+            "article_category": ex.article_category,
+            "policy_subtype": ",".join(ex.policy_subtype),
+            "sentiment_score": ex.sentiment_score,
+            "sentiment_target": ex.sentiment_target,
+            "source_url": art["url"],
+            "title": art["title"],
+            "published": published,
+            "mech": ",".join(ex.mechanisms),
+            "policy_stance": ex.policy_stance,
+            "tagger": tagger,
+        })
+        countries += [{"article_id": article_id, "country_code": cc} for cc in dict.fromkeys(ex.country_codes)]
+        sectors += [{"article_id": article_id, "sector_id": sid} for sid in dict.fromkeys(ex.sector_tags) if sid in valid_sectors]
+
+    ids = [a["article_id"] for a in articles]
+    store.upsert_df("dim_source", pd.DataFrame(sources.values()), ["source_id"])
+    store.upsert_df("fact_article", pd.DataFrame(articles), ["article_id"])
+    for table in ("bridge_article_country", "bridge_article_sector"):
+        store.execute(f"DELETE FROM {table} WHERE article_id IN ({_id_list(ids)})")
+    if countries:
+        store.upsert_df("bridge_article_country", pd.DataFrame(countries), ["article_id", "country_code"])
+    if sectors:
+        store.upsert_df("bridge_article_sector", pd.DataFrame(sectors), ["article_id", "sector_id"])
+    return len(articles)
+
+
+def _rule_tag(art: dict) -> Extraction:
+    return Extraction(**rule_tag(art["title"], art.get("raw_text") or "", art.get("category", ""), art.get("source", "")))
+
+
+def _call_with_fallback(client, batch: list[dict], spend, models: list[str]) -> dict[int, Extraction] | None:
+    """Tries `models` in order with a backoff retry on 503; 429 (daily quota)
+    skips straight to the next model. A model that succeeds moves to the front
+    of `models`, so later batches in the run skip a model that is overloaded.
+    `spend()` records one budget unit per attempt, False once it is gone."""
+    for model in list(models):
+        for attempt, delay in enumerate((0, *RETRY_DELAYS_S)):
+            if not spend():
+                return None
+            time.sleep(delay)
+            try:
+                result = classify_batch(client, model, batch)
+                models.remove(model)
+                models.insert(0, model)
+                return result
+            except Exception as e:  # google.genai raises ServerError/ClientError; schema errors are ValueError
+                msg = str(e)
+                log.warning("Gemini %s attempt %d failed for %d articles: %s", model, attempt + 1, len(batch), msg[:160])
+                with open(DEADLETTER_PATH, "a") as f:
+                    f.write(json.dumps({"model": model, "batch_urls": [a["url"] for a in batch], "error": msg[:500]}) + "\n")
+                if "503" in msg or "UNAVAILABLE" in msg:
+                    continue  # transient overload: back off and retry this model
+                break  # 429 quota / 4xx / malformed output: try the next model
+    return None
 
 
 def run_extraction(raw_path: Path | None = None, gcs_bucket: str | None = None, gcs_object: str | None = None) -> dict:
@@ -203,112 +326,72 @@ def run_extraction(raw_path: Path | None = None, gcs_bucket: str | None = None, 
         # function (iterating a dict yields its string keys, not articles).
         if not gcs_object.startswith("raw/"):
             log.info("Ignoring non-article object gs://%s/%s", gcs_bucket, gcs_object)
-            return {"processed": 0, "failed": 0}
+            return {"rules": 0, "llm": 0}
         from google.cloud import storage
         blob = storage.Client().bucket(gcs_bucket).blob(gcs_object)
         articles = json.loads(blob.download_as_text())
         if not isinstance(articles, list):
             log.warning("gs://%s/%s is not an article list (got %s) — skipping", gcs_bucket, gcs_object, type(articles).__name__)
-            return {"processed": 0, "failed": 0}
+            return {"rules": 0, "llm": 0}
         source_label = f"gs://{gcs_bucket}/{gcs_object}"
     else:
         raw_path = raw_path or _latest_raw_file()
         if raw_path is None:
             log.warning("No raw article files found in %s", RAW_DIR)
-            return {"processed": 0, "failed": 0}
+            return {"rules": 0, "llm": 0}
         articles = json.loads(raw_path.read_text())
         source_label = raw_path.name
 
     store = get_store()
+    DEADLETTER_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # Backlog first (oldest first — FIFO), then this run's newly-arrived
-    # articles, deduped by URL so an article already queued from an earlier
-    # run doesn't get processed twice just because it showed up again.
+    # --- Pass 1: rule-tag everything not yet in fact_article (new articles,
+    # plus any backlog from before this pass existed). Zero API cost. ---
     backlog = _load_queue(store)
-    seen_urls = {a["url"] for a in backlog}
-    candidates = backlog + [a for a in articles if a["url"] not in seen_urls]
+    queued_urls = {a["url"] for a in backlog}
+    new = [a for a in {a["url"]: a for a in articles}.values() if a["url"] not in queued_urls]
+    existing = set(store.query_df("SELECT article_id FROM fact_article")["article_id"])
+    untagged = [a for a in backlog + new if _article_id(a) not in existing]
+    rules_written = _write_tagged(store, [(a, _rule_tag(a)) for a in untagged], "rules")
+    _enqueue(store, [a for a in new if _article_id(a) not in existing])
 
-    budget_used = _budget_used_today(store)
-    remaining = max(0, DAILY_EXTRACTION_BUDGET - budget_used)
-
-    if remaining == 0:
-        _enqueue(store, [a for a in candidates if "_queue_id" not in a])
-        log.info(
-            "Daily extraction budget (%d) already used for %s — queued %d article(s) for a later run",
-            DAILY_EXTRACTION_BUDGET, _today_utc(), len(candidates),
-        )
-        return {"processed": 0, "failed": 0, "queued": len(candidates)}
-
-    to_process, to_queue = candidates[:remaining], candidates[remaining:]
-    if to_queue:
-        log.info("Processing %d of %d article(s) this run — queuing %d for later (daily budget)", len(to_process), len(candidates), len(to_queue))
-        _enqueue(store, [a for a in to_queue if "_queue_id" not in a])
-
+    # --- Pass 2: LLM refinement, newest first, in batches. ---
     client = _client()
-    source_rows, article_rows, bridge_country_rows, bridge_sector_rows = [], [], [], []
-    failed = 0
-    processed_queue_ids = []
+    pending = sorted(_load_queue(store), key=lambda a: a.get("published") or "", reverse=True)
+    budget_used = _budget_used_today(store)
 
-    for art in to_process:
-        if "_queue_id" in art:
-            processed_queue_ids.append(art["_queue_id"])
-        try:
-            extraction = classify_and_tag(client, art["title"], art["raw_text"])
-        except Exception as e:
-            failed += 1
-            DEADLETTER_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(DEADLETTER_PATH, "a") as f:
-                f.write(json.dumps({"article": art, "error": str(e)}) + "\n")
-            log.warning("Extraction failed for %s: %s", art["url"][:80], e)
-            continue
-        finally:
-            budget_used += 1  # counts the attempt either way — Google bills a failed call same as a successful one
-            _record_budget_used(store, budget_used)  # persisted per-attempt, not batched at the end — a downstream crash (e.g. the dim_source/BigQuery bug this replaced) must never leave an already-billed Gemini call invisible to the budget tracker
+    def spend() -> bool:
+        nonlocal budget_used
+        if budget_used >= DAILY_EXTRACTION_BUDGET:
+            return False
+        budget_used += 1
+        _record_budget_used(store, budget_used)  # persisted per attempt: a crash must never hide a billed call
+        return True
 
-        article_id = new_id()
-        source_id = art["source"].lower().replace(" ", "_")
-        source_rows.append({
-            "source_id": source_id, "source_name": art["source"],
-            "source_type": art["category"], "home_country_code": None,
-        })
-        article_rows.append({
-            "article_id": article_id,
-            "date_key": (art["published"] or "")[:10],
-            "source_id": source_id,
-            "article_category": extraction.article_category,
-            "policy_subtype": ",".join(extraction.policy_subtype),
-            "sentiment_score": extraction.sentiment_score,
-            "sentiment_target": extraction.sentiment_target,
-            "source_url": art["url"],
-            "title": art["title"],
-            "published": art["published"] or None,
-            "mech": ",".join(extraction.mechanisms),
-            "policy_stance": extraction.policy_stance,
-        })
-        for cc in extraction.country_codes:
-            bridge_country_rows.append({"article_id": article_id, "country_code": cc})
-        for sec in extraction.sector_tags:
-            bridge_sector_rows.append({"article_id": article_id, "sector_id": sec})
+    llm_written = 0
+    started = time.monotonic()
+    models = list(dict.fromkeys([GEMINI_MODEL, GEMINI_FALLBACK_MODEL]))
+    if client is None:
+        log.warning("GEMINI_API_KEY not set — skipping LLM refinement; %d articles stay rule-tagged", len(pending))
+    else:
+        for start in range(0, len(pending), BATCH_SIZE):
+            if time.monotonic() - started > TIME_LIMIT_S:
+                break
+            batch = pending[start:start + BATCH_SIZE]
+            result = _call_with_fallback(client, batch, spend, models)
+            if result is None:
+                break  # budget exhausted or both models unavailable — rest stay queued
+            refined = [(a, result[i]) for i, a in enumerate(batch) if i in result]
+            llm_written += _write_tagged(store, refined, "llm")
+            _dequeue(store, [a["_queue_id"] for a, _ in refined])
+            time.sleep(MIN_SECONDS_BETWEEN_CALLS)
 
-        time.sleep(13)  # free tier is 5 requests/minute (observed in production 429s) — 0.2s was ~60x too fast to actually respect that
-
-    import pandas as pd
-    if source_rows:
-        store.upsert_df("dim_source", pd.DataFrame(source_rows).drop_duplicates("source_id"), ["source_id"])
-    if article_rows:
-        store.upsert_df("fact_article", pd.DataFrame(article_rows), ["article_id"])
-    if bridge_country_rows:
-        store.upsert_df("bridge_article_country", pd.DataFrame(bridge_country_rows), ["article_id", "country_code"])
-    if bridge_sector_rows:
-        store.upsert_df("bridge_article_sector", pd.DataFrame(bridge_sector_rows), ["article_id", "sector_id"])
-
-    _dequeue(store, processed_queue_ids)
-
+    remaining = len(pending) - llm_written
     log.info(
-        "Processed %d articles (%d failed) from %s — %d/%d daily budget used, %d queued for later",
-        len(article_rows), failed, source_label, budget_used, DAILY_EXTRACTION_BUDGET, len(to_queue),
+        "%s: %d rule-tagged, %d LLM-refined, %d awaiting LLM — %d/%d daily calls used",
+        source_label, rules_written, llm_written, remaining, budget_used, DAILY_EXTRACTION_BUDGET,
     )
-    return {"processed": len(article_rows), "failed": failed, "queued": len(to_queue)}
+    return {"rules": rules_written, "llm": llm_written, "queued": remaining}
 
 
 if __name__ == "__main__":

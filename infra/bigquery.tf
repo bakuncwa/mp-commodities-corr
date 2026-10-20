@@ -82,6 +82,7 @@ resource "google_bigquery_table" "fact_article" {
     { name = "published", type = "TIMESTAMP" },
     { name = "mech", type = "STRING" },
     { name = "policy_stance", type = "STRING" },
+    { name = "tagger", type = "STRING" },
   ])
 }
 
@@ -151,6 +152,7 @@ resource "google_bigquery_table" "fact_correlation_result" {
     { name = "p_value", type = "FLOAT64" },
     { name = "r_squared", type = "FLOAT64" },
     { name = "computed_at", type = "TIMESTAMP" },
+    { name = "q_value_bh", type = "FLOAT64" },
   ])
 }
 
@@ -215,5 +217,25 @@ resource "google_bigquery_table" "dim_extraction_budget" {
   schema = jsonencode([
     { name = "date_key", type = "STRING", mode = "REQUIRED" },
     { name = "calls_used", type = "INTEGER" },
+  ])
+}
+
+resource "google_bigquery_table" "fact_hike_forecast" {
+  dataset_id          = google_bigquery_dataset.main.dataset_id
+  table_id            = "fact_hike_forecast"
+  project             = var.project_id
+  deletion_protection = false
+  schema = jsonencode([
+    { name = "forecast_id", type = "STRING", mode = "REQUIRED" },
+    { name = "run_id", type = "STRING" },
+    { name = "country_code", type = "STRING" },
+    { name = "as_of_month", type = "STRING" },
+    { name = "target_month", type = "STRING" },
+    { name = "hike_probability", type = "FLOAT64" },
+    { name = "model", type = "STRING" },
+    { name = "cv_roc_auc", type = "FLOAT64" },
+    { name = "base_rate", type = "FLOAT64" },
+    { name = "drivers", type = "STRING" },
+    { name = "computed_at", type = "TIMESTAMP" },
   ])
 }

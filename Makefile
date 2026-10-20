@@ -1,11 +1,11 @@
-.PHONY: setup seed ingest-feeds extract ingest-macro ingest-market analyze api export-api frontend all-local mock-rss ingest-feeds-local
+.PHONY: setup seed ingest-feeds extract ingest-macro ingest-market analyze api export-api frontend all-local mock-rss ingest-feeds-local analyze-spark forecast
 
 VENV := .venv/bin
 
 setup:
 	python3.11 -m venv .venv
 	$(VENV)/pip install --upgrade pip
-	$(VENV)/pip install -r requirements.txt
+	$(VENV)/pip install -r requirements-notebooks.txt
 
 seed:
 	$(VENV)/python -m common.seed
@@ -33,6 +33,14 @@ ingest-market:
 
 analyze:
 	$(VENV)/python -m analysis.correlation_regression
+
+# Next-month hike probabilities only (also run by `make analyze` after the batch).
+forecast:
+	$(VENV)/python -m analysis.forecast
+
+# Same batch on Apache Spark (local[*]); `pip install -r requirements-spark.txt` first.
+analyze-spark:
+	$(VENV)/python -m analysis.spark_job
 
 api:
 	$(VENV)/uvicorn api.main:app --reload --port 8000

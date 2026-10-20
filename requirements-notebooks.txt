@@ -1,0 +1,9 @@
+# Notebook-only dependencies (notebooks/*.ipynb). Kept out of requirements.txt,
+# which every Cloud Run image and Cloud Function package installs — Pingouin
+# alone pulls statsmodels, scikit-learn, matplotlib and seaborn (~240 MB).
+-r requirements.txt
+jupyterlab>=4.2,<5
+ipykernel>=6.29,<7
+matplotlib>=3.8,<4
+pingouin>=0.5.4,<0.6      # regression diagnostics tables in 02_correlation_regression.ipynb
+scikit-learn>=1.4,<2      # LassoCV, LogisticRegression, MLPRegressor in 02_correlation_regression.ipynb

@@ -1,8 +1,6 @@
 """
 Seeds the dimension tables and the country/sector analysis pairs this project
-tracks. Global on purpose — not scoped to a single country — chosen by actual
-production/processing share of each commodity, plus the central banks whose
-RSS feeds are configured in etl/feeds.yaml.
+tracks: every economy × every sector, with a featured subset of producer pairs.
 
 Run directly: `python -m common.seed`
 """
@@ -11,31 +9,17 @@ from __future__ import annotations
 import pandas as pd
 
 from common.db import get_store
+from common.countries import ALL_COUNTRIES
 from common.schema import SECTORS, INDICATORS
 
-COUNTRIES = [
-    ("CL", "Chile", "Latin America & Caribbean"),
-    ("PE", "Peru", "Latin America & Caribbean"),
-    ("ZM", "Zambia", "Sub-Saharan Africa"),
-    ("CD", "DR Congo", "Sub-Saharan Africa"),
-    ("AU", "Australia", "East Asia & Pacific"),
-    ("ID", "Indonesia", "East Asia & Pacific"),
-    ("CN", "China", "East Asia & Pacific"),
-    ("TW", "Taiwan", "East Asia & Pacific"),
-    ("KR", "South Korea", "East Asia & Pacific"),
-    ("JP", "Japan", "East Asia & Pacific"),
-    ("US", "United States", "North America"),
-    ("GB", "United Kingdom", "Europe & Central Asia"),
-    ("DE", "Germany", "Europe & Central Asia"),
-    ("IN", "India", "South Asia"),
-]
+# Every economy (see common/countries.py) — the article tagger, the macro
+# ingest and the correlation batch all run over this full list.
+COUNTRIES = [(cc, name, region) for cc, name, region, _lat, _lon in ALL_COUNTRIES]
 
-# Which country/sector pairs the correlation job actually runs, chosen by real
-# production/processing share so the rate-vs-valuation relationship being
-# tested is economically plausible (e.g. Chile is the world's largest copper
-# producer, DR Congo mines ~70% of global cobalt, Taiwan hosts the dominant
-# advanced-node foundry).
-COUNTRY_SECTOR_PAIRS = [
+# Producer/processor pairs (e.g. Chile is the world's largest copper producer,
+# DR Congo mines ~70% of global cobalt, Taiwan hosts the dominant advanced-node
+# foundry). Shown first in the UI; the batch itself runs every pair below.
+FEATURED_PAIRS = [
     ("CL", "copper"),
     ("PE", "copper"),
     ("ZM", "copper"),
@@ -51,6 +35,12 @@ COUNTRY_SECTOR_PAIRS = [
     ("JP", "semiconductors"),
 ]
 
+# Every country × every sector. Commodity prices and sector ETFs are global
+# series, so each pair asks whether that country's rate changes co-move with the
+# global sector; pairs without a policy-rate series (no BIS coverage) produce no
+# panel and are skipped by the batch at no cost.
+COUNTRY_SECTOR_PAIRS = [(cc, sector_id) for cc, *_ in COUNTRIES for sector_id, *_ in SECTORS]
+
 
 def seed():
     store = get_store()
@@ -65,7 +55,7 @@ def seed():
     store.upsert_df("dim_indicator", indicators_df, ["indicator_id"])
 
     print(f"Seeded {len(countries_df)} countries, {len(sectors_df)} sectors, {len(indicators_df)} indicators.")
-    print(f"{len(COUNTRY_SECTOR_PAIRS)} country/sector analysis pairs configured: {COUNTRY_SECTOR_PAIRS}")
+    print(f"{len(COUNTRY_SECTOR_PAIRS)} country/sector analysis pairs configured ({len(FEATURED_PAIRS)} featured).")
 
 
 if __name__ == "__main__":
