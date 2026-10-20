@@ -412,7 +412,12 @@ Screenshots of the live site ([mp-commodities-corr.web.app](https://mp-commoditi
 - **NLP pipeline.** Restored a news feed that had stored **0 of 5,350** queued articles with a rules-first dictionary tagger plus batched Gemini refinement (20 articles/call, model fallback). Result: **5,373 articles tagged across 103 countries** and **20× LLM throughput** (15 → 300 articles/day) within the same free quota. Rules agree with the LLM on 100% of categories and 90% of sector sets.
 - **Statistical inference.** Lagged partial-correlation and OLS batch over **1,308 country × sector pairs** (940 estimable results), with empirical control selection. Closed-form NumPy kernels are **3.6× faster** than Pingouin with 3.1e-15 parity, and panel construction is **13× faster** (25.2 s → 1.9 s). Benjamini–Hochberg FDR correction, now surfaced in the UI, shows only **54 of 940** specifications survive versus 245 at raw *p* < 0.05.
 - **Machine learning.** Benchmarked 10 algorithms (regularized regression, SVM, k-NN, random forest, gradient boosting, MLP, logistic regression, naive Bayes) under walk-forward validation, with Diebold–Mariano tests. Deployed a random-forest next-month rate-hike classifier for **57 countries**: out-of-sample **ROC-AUC 0.83 vs 0.63** for persistence. It uses publication-lag-aware features, and permutation-importance drivers are shown in the UI.
-- **Platform and delivery.** FastAPI on Cloud Run with TTL caching, Terraform IaC with **zero plan drift**, canary-tested deploys, and a Bootswatch Lux frontend on Firebase Hosting (world map, hike-probability layer, export to CSV/XLSX/PDF). The whole system runs within GCP's Always Free tier.
+- **Platform and delivery.** FastAPI on Cloud Run with TTL caching, Terraform IaC with **zero plan drift**, canary-tested deploys, and a Bootswatch Lux frontend on Firebase Hosting. The frontend has a world map plotting **all 218 economies** across every continent, a hike-probability layer, deep links (`?country=`, `?sector=`, `?layer=hike`) and CSV/XLSX/PDF export. The whole system runs within GCP's Always Free tier.
+- **Production reliability.** Diagnosed and fixed four latent failures that surfaced on the first full production run:
+  - a dependency incompatibility (pyarrow 26 requires NumPy 2) that broke BigQuery DataFrame I/O; rolled back within minutes, then pinned and redeployed via canary;
+  - an invalid BigQuery `MERGE` for key-only bridge tables;
+  - an out-of-memory monthly ingest (546 MiB of 512 MiB), resized to 1 GiB / 1 vCPU within the free tier;
+  - a timezone error that made XLSX export fail.
 
 ---
 
