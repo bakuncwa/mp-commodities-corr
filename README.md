@@ -65,7 +65,7 @@ flowchart TD
 | --- | --- | --- |
 | `etl/ingest_feeds.py` | Scheduler, 3×/day | SHA-256(URL)-deduplicated raw JSON → GCS |
 | `etl/extract_and_tag.py` | GCS object-finalize | Pass 1: every article rule-tagged and written (`tagger='rules'`). Pass 2: queued articles refined newest-first by Gemini, 20 per call, ≤15 calls/day, overwriting with `tagger='llm'` |
-| `etl/ingest_macro_indicators.py` | (bundled below) | 11 bulk requests cover all countries: BIS ×2, WDI ×6, FRED ×3 (daily series fetched as monthly averages) |
+| `etl/ingest_macro_indicators.py` | (bundled below) | 12 bulk requests cover all countries: BIS ×3, WDI ×6, FRED ×3 (daily series fetched as monthly averages). The latest finished month comes provisionally from BIS daily policy rates (flagged `is_interpolated`) until the monthly figure is published |
 | `etl/ingest_macro_indicators.py` + `ingest_market_data.py` | Scheduler, monthly (one combined function, which keeps the job count within the 3-job free tier) | `fact_macro_indicator`, `fact_commodity_price`, `fact_equity_valuation` |
 | `analysis/correlation_regression.py` → `analysis/forecast.py` | Scheduler, monthly (one Cloud Run job, 2 vCPU / 2 GiB) | Append-only `fact_correlation_result` with BH *q*-values, then `fact_hike_forecast` (per-country next-month hike probability) |
 
@@ -373,7 +373,7 @@ analysis/   correlation_regression.py (batch + kernels + BH q-values), forecast.
             interpret.py (LLM interpretation + cache), Dockerfile
 api/        main.py (FastAPI), export.py (CSV/XLSX/PDF service), Dockerfile, Dockerfile.export
 frontend/   index.html (Bootswatch Lux, Leaflet world map with correlation / hike layers, correlation panel, article feed)
-images/     README demo screenshots (live production site)
+images/     README demo screenshots (production data)
 infra/      Terraform (BigQuery, Functions, Cloud Run, Scheduler, Firebase, budget), Cloud Build
 notebooks/  01_etl_pipeline.ipynb (ingest, tagging, rules-vs-LLM agreement)
             02_correlation_regression.ipynb (engines cross-check, diagnostics, Lasso, FDR correction)
@@ -386,7 +386,7 @@ Production inference and tagging live in `.py` modules, because Cloud Functions 
 
 ## Demo
 
-Screenshots of the live site ([mp-commodities-corr.web.app](https://mp-commodities-corr.web.app)), taken 2026-10-20 against production data. Desktop views at 1440 px, the mobile view at a true 390 px viewport.
+Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app), taken 2026-11-03 against production data. Desktop views at 1440 px, the mobile view at a true 390 px viewport.
 
 **Dashboard: world correlation map and US/semiconductors panel** ([`?country=US&sector=semiconductors`](https://mp-commodities-corr.web.app/?country=US&sector=semiconductors)). Markers cover all 218 economies; colour is the sign of *r* for the active basis × target, and size is tagged-article volume.
 
@@ -400,7 +400,7 @@ Screenshots of the live site ([mp-commodities-corr.web.app](https://mp-commoditi
 | Next-month rate-hike forecast | Live news feed (rules-first tagging) |
 | --- | --- |
 | ![Hike forecast](images/04-hike-forecast.png) | ![News feed](images/05-news-feed.png) |
-| US: 69%, 6.1× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
+| US: 68%, 6.0× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
 
 <p align="center"><img src="images/06-mobile.png" alt="Mobile view at 390 px" width="320"><br><em>Mobile (390 px): stacked layout, no horizontal scroll</em></p>
 
@@ -408,7 +408,7 @@ Screenshots of the live site ([mp-commodities-corr.web.app](https://mp-commoditi
 
 ## Technical Contributions
 
-- **Data engineering.** Built a serverless GCP ETL (Cloud Functions, Cloud Scheduler, Cloud Storage → BigQuery star schema, DuckDB for local dev) covering **218 economies**. Macro ingestion was refactored from ~120 per-country calls to **11 bulk API requests** (BIS, World Bank WDI, FRED), loading **541k indicator rows**. Policy-rate coverage grew from 11 to **59 countries** by splicing the ECB rate onto euro members from each adoption date.
+- **Data engineering.** Built a serverless GCP ETL (Cloud Functions, Cloud Scheduler, Cloud Storage → BigQuery star schema, DuckDB for local dev) covering **218 economies**. Macro ingestion was refactored from ~120 per-country calls to **12 bulk API requests** (BIS, World Bank WDI, FRED), loading **541k indicator rows**. Policy-rate coverage grew from 11 to **59 countries** by splicing the ECB rate onto euro members from each adoption date.
 - **NLP pipeline.** Restored a news feed that had stored **0 of 5,350** queued articles with a rules-first dictionary tagger plus batched Gemini refinement (20 articles/call, model fallback). Result: **5,373 articles tagged across 103 countries** and **20× LLM throughput** (15 → 300 articles/day) within the same free quota. Rules agree with the LLM on 100% of categories and 90% of sector sets.
 - **Statistical inference.** Lagged partial-correlation and OLS batch over **1,308 country × sector pairs** (940 estimable results), with empirical control selection. Closed-form NumPy kernels are **3.6× faster** than Pingouin with 3.1e-15 parity, and panel construction is **13× faster** (25.2 s → 1.9 s). Benjamini–Hochberg FDR correction, now surfaced in the UI, shows only **54 of 940** specifications survive versus 245 at raw *p* < 0.05.
 - **Machine learning.** Benchmarked 10 algorithms (regularized regression, SVM, k-NN, random forest, gradient boosting, MLP, logistic regression, naive Bayes) under walk-forward validation, with Diebold–Mariano tests. Deployed a random-forest next-month rate-hike classifier for **57 countries**: out-of-sample **ROC-AUC 0.83 vs 0.63** for persistence. It uses publication-lag-aware features, and permutation-importance drivers are shown in the UI.
