@@ -39,6 +39,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("ingest_macro_indicators")
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
+MIN_DAILY_DAY = 15  # a provisional month must have daily data through at least this day
 COUNTRY_CODES = {c[0] for c in COUNTRIES}
 
 
@@ -79,16 +80,32 @@ def _record_ids(df: pd.DataFrame) -> pd.Series:
     return df["indicator_id"] + "|" + df["country_code"].fillna("GLOBAL") + "|" + df["date_key"]
 
 
-def fetch_bis_all(dataflow: str, dim_key: str) -> pd.DataFrame:
+def fetch_bis_all(dataflow: str, dim_key: str, start: str | None = None) -> pd.DataFrame:
     """Every reporting area in one request; dim_key leaves REF_AREA open,
     e.g. 'M.' (WS_CBPOL) or 'M.R.B.' (WS_EER)."""
-    r = _get_with_retry(f"https://stats.bis.org/api/v1/data/{dataflow}/{dim_key}", params={"format": "csv"})
+    params = {"format": "csv", **({"startPeriod": start} if start else {})}
+    r = _get_with_retry(f"https://stats.bis.org/api/v1/data/{dataflow}/{dim_key}", params=params)
     if r is None or r.status_code != 200 or len(r.text) < 100:
         return pd.DataFrame()
     from io import StringIO
     df = pd.read_csv(StringIO(r.text), usecols=["REF_AREA", "TIME_PERIOD", "OBS_VALUE"])
     df = df.rename(columns={"REF_AREA": "country_code", "TIME_PERIOD": "date_key", "OBS_VALUE": "value"})
     return df.dropna(subset=["value"])
+
+
+def provisional_months(daily: pd.DataFrame, monthly: pd.DataFrame, now_month: str) -> pd.DataFrame:
+    """Extends the monthly series from BIS's fresher daily series, which runs
+    about a month ahead of it. A month's value is its last daily observation
+    (identical to the published monthly figure for all 37 areas compared), for
+    finished calendar months only, and only if daily data reaches MIN_DAILY_DAY.
+    Rows are flagged is_interpolated; the official figure replaces them by
+    record_id once BIS publishes it."""
+    d = daily.assign(month=daily["date_key"].str[:7])
+    d = d[d["month"] < now_month].sort_values("date_key").groupby(["country_code", "month"]).tail(1)
+    d = d[d["date_key"].str[8:10].astype(int) >= MIN_DAILY_DAY]
+    latest = d["country_code"].map(monthly.groupby("country_code")["date_key"].max())
+    d = d[latest.notna() & (d["month"] > latest)]
+    return pd.DataFrame({"country_code": d["country_code"], "date_key": d["month"], "value": d["value"], "is_interpolated": True})
 
 
 def expand_euro_area(rates: pd.DataFrame) -> pd.DataFrame:
@@ -183,6 +200,11 @@ def run_ingest() -> dict:
 
     # --- BIS: policy_rate, reer (one request each, all reporting areas) ---
     rates = fetch_bis_all("WS_CBPOL", "M.")
+    if not rates.empty:
+        daily_start = (pd.Period(now_month, "M") - 3).strftime("%Y-%m-01")
+        extra = provisional_months(fetch_bis_all("WS_CBPOL", "D.", start=daily_start), rates, now_month)
+        rates = pd.concat([rates, extra], ignore_index=True)
+        log.info("BIS policy_rate: %d provisional month(s) from the daily series, latest %s", len(extra), extra["date_key"].max() if len(extra) else "n/a")
     rates = expand_euro_area(rates) if not rates.empty else rates
     for indicator_id, df in (("policy_rate", rates), ("reer", fetch_bis_all("WS_EER", "M.R.B."))):
         df = df[df["country_code"].isin(COUNTRY_CODES)] if not df.empty else df
