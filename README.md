@@ -260,7 +260,7 @@ flowchart LR
 - **Nominal vs. real rate** are separate regressors. Schischke & Rathgeber (2025) document a sign reversal in the rate–commodity response between the pre-2008 and ZLB regimes. In a ZLB regime the nominal rate is near-constant while the real rate varies. Date-window filtering supports split-sample (pre/post-2008) tests directly.
 - **Transmission channels** are tagged per article by the extractor (`mechanisms`). Each has a proxy regressor: cost of carry → `real_interest_rate`; USD channel → `usd_index`; portfolio substitution → `treasury_yield_10y`; extraction incentives → `production_volume_change` (metals only, currently NULL pending USGS ingest).
 - **Caveats:** associations are not causal. The control/lag search over 7 × 4 specifications is a specification search, and *R*² values are in-sample. FRED global series (`country_code IS NULL`) do not enter country panels.
-- **Multiplicity:** of 940 specifications (production batch), 245 (26.1%) have *p* < 0.05 against ~5% expected under the null. 54 survive Benjamini–Hochberg FDR at 5%, and 11 survive Bonferroni. Each result stores its q-value, and the panel badge reports FDR-robustness (`notebooks/02`, `pg.multicomp`). Most BH survivors are *real rate → nickel price at t+2* across euro members, which share one ECB rate, so they are not independent findings.
+- **Multiplicity:** of 940 specifications (production batch), 249 (26.5%) have *p* < 0.05 against ~5% expected under the null. 52 survive Benjamini–Hochberg FDR at 5%, and 11 survive Bonferroni. Each result stores its q-value, and the panel badge reports FDR-robustness (`notebooks/02`, `pg.multicomp`). Most BH survivors are *real rate → nickel price at t+2* across euro members, which share one ECB rate, so they are not independent findings.
 
 ### Representative results (local warehouse, current batch)
 
@@ -395,12 +395,12 @@ Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app
 | Hike-probability layer ([`?layer=hike`](https://mp-commodities-corr.web.app/?layer=hike)) | Correlation panel with FDR *q*-value |
 | --- | --- |
 | ![Hike-probability map](images/02-hike-probability-map.png) | ![Correlation panel](images/03-correlation-panel.png) |
-| Single-hue ramp: *P*(policy-rate hike in Oct 2026) per country from the random-forest classifier | *r*, partial *r*, *p*, Benjamini–Hochberg *q* across 940 tests, *R*², best-fit lag, Gemini interpretation |
+| Single-hue ramp: *P*(policy-rate hike in Nov 2026) per country from the random-forest classifier | *r*, partial *r*, *p*, Benjamini–Hochberg *q* across 940 tests, *R*², best-fit lag, Gemini interpretation |
 
 | Next-month rate-hike forecast | Live news feed (rules-first tagging) |
 | --- | --- |
 | ![Hike forecast](images/04-hike-forecast.png) | ![News feed](images/05-news-feed.png) |
-| US: 68%, 6.0× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
+| US: 75% for Nov 2026, 6.6× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
 
 <p align="center"><img src="images/06-mobile.png" alt="Mobile view at 390 px" width="320"><br><em>Mobile (390 px): stacked layout, no horizontal scroll</em></p>
 
@@ -410,7 +410,7 @@ Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app
 
 - **Data engineering.** Built a serverless GCP ETL (Cloud Functions, Cloud Scheduler, Cloud Storage → BigQuery star schema, DuckDB for local dev) covering **218 economies**. Macro ingestion was refactored from ~120 per-country calls to **12 bulk API requests** (BIS, World Bank WDI, FRED), loading **541k indicator rows**. Policy-rate coverage grew from 11 to **59 countries** by splicing the ECB rate onto euro members from each adoption date.
 - **NLP pipeline.** Restored a news feed that had stored **0 of 5,350** queued articles with a rules-first dictionary tagger plus batched Gemini refinement (20 articles/call, model fallback). Result: **5,373 articles tagged across 103 countries** and **20× LLM throughput** (15 → 300 articles/day) within the same free quota. Rules agree with the LLM on 100% of categories and 90% of sector sets.
-- **Statistical inference.** Lagged partial-correlation and OLS batch over **1,308 country × sector pairs** (940 estimable results), with empirical control selection. Closed-form NumPy kernels are **3.6× faster** than Pingouin with 3.1e-15 parity, and panel construction is **13× faster** (25.2 s → 1.9 s). Benjamini–Hochberg FDR correction, now surfaced in the UI, shows only **54 of 940** specifications survive versus 245 at raw *p* < 0.05.
+- **Statistical inference.** Lagged partial-correlation and OLS batch over **1,308 country × sector pairs** (940 estimable results), with empirical control selection. Closed-form NumPy kernels are **3.6× faster** than Pingouin with 3.1e-15 parity, and panel construction is **13× faster** (25.2 s → 1.9 s). Benjamini–Hochberg FDR correction, now surfaced in the UI, shows only **52 of 940** specifications survive versus 249 at raw *p* < 0.05.
 - **Machine learning.** Benchmarked 10 algorithms (regularized regression, SVM, k-NN, random forest, gradient boosting, MLP, logistic regression, naive Bayes) under walk-forward validation, with Diebold–Mariano tests. Deployed a random-forest next-month rate-hike classifier for **57 countries**: out-of-sample **ROC-AUC 0.83 vs 0.63** for persistence. It uses publication-lag-aware features, and permutation-importance drivers are shown in the UI.
 - **Platform and delivery.** FastAPI on Cloud Run with TTL caching, Terraform IaC with **zero plan drift**, canary-tested deploys, and a Bootswatch Lux frontend on Firebase Hosting. The frontend has a world map plotting **all 218 economies** across every continent, a hike-probability layer, deep links (`?country=`, `?sector=`, `?layer=hike`) and CSV/XLSX/PDF export. The whole system runs within GCP's Always Free tier.
 - **Production reliability.** Diagnosed and fixed four latent failures that surfaced on the first full production run:
