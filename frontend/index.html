@@ -203,7 +203,7 @@ async function init() {
       api(API_BASE, '/api/pairs'), api(API_BASE, '/api/sectors'), api(API_BASE, '/api/geo'), api(API_BASE, '/api/countries'),
     ]);
   } catch (e) {
-    showApiBanner(`Can't reach the API at ${API_BASE} (${e.message}).` + (IS_LOCAL ? ' Start it with: make api' : ' The Cloud Run service may be cold-starting — reload in a few seconds.'));
+    showApiBanner(`Can't reach the API at ${API_BASE} (${e.message}).` + (IS_LOCAL ? ' Start it with: make api' : ' The Cloud Run service may be cold-starting. Reload in a few seconds.'));
     document.getElementById('status').innerHTML = '<span class="dot pos"></span>offline';
     document.getElementById('panel').innerHTML = '<p class="text-muted my-5 text-center">API unavailable.</p>';
     return;
@@ -375,7 +375,7 @@ async function loadFeeds() {
     feedScope = `Articles tagged ${countryName(active.country)}`;
     if (!currentArticles.length) {
       currentArticles = await api(API_BASE, '/api/articles?limit=100');
-      feedScope = `No ${countryName(active.country)}-tagged articles yet — showing latest worldwide`;
+      feedScope = `No ${countryName(active.country)}-tagged articles yet. Showing latest worldwide.`;
     }
   } catch (e) {
     currentArticles = [];
@@ -386,10 +386,10 @@ async function loadFeeds() {
 
 function feedItem(a) {
   const s = a.sentiment_score || 0;
-  const sent = s > 0.05 ? '<span class="badge bg-light pos">positive</span>' : s < -0.05 ? '<span class="badge bg-light neg">negative</span>' : '<span class="badge bg-light text-muted">neutral</span>';
+  const sent = s > 0.05 ? '<span class="badge bg-light pos">positive</span>' : s < -0.05 ? '<span class="badge bg-light neg">negative</span>' : '';
   const stance = a.article_category === 'monetary_policy' && a.policy_stance && a.policy_stance !== 'neutral' ? `<span class="badge bg-light text-dark">${esc(a.policy_stance)}</span>` : '';
   const subtype = a.policy_subtype ? `<span class="badge bg-light text-dark">${esc(a.policy_subtype.replace(/,/g, ', ').replace(/_/g, ' '))}</span>` : '';
-  const tagger = a.tagger === 'llm' ? '<span class="badge bg-secondary" title="Refined by Gemini structured extraction">LLM</span>' : '<span class="badge bg-light text-muted" title="Tagged by the deterministic rule tagger; awaiting LLM refinement">auto</span>';
+  const tagger = a.tagger === 'llm' ? '<span class="badge bg-secondary" title="Refined by Gemini structured extraction">LLM</span>' : '';
   const date = a.published ? new Date(a.published).toISOString().slice(0, 10) : '';
   const href = /^https?:\/\//.test(a.source_url || '') ? a.source_url : '#';
   return `<div class="list-group-item py-3">
@@ -422,12 +422,12 @@ function interpretResult(d) {
     `A ${rateBasis} rate increase in ${esc(countryName(active.country))} is associated with a <strong>${dir}</strong> in ${targetLabel}, ${controlPhrase} (partial r = ${fmtR(d.partial_r)}).`,
     `At |r| = ${absR.toFixed(2)}, this reads as a <strong>${strength}</strong> relationship (below 0.3 weak, 0.3–0.5 moderate, above 0.5 strong).`,
     d.p_value >= 0.05
-      ? `p = ${d.p_value.toFixed(3)} is above 0.05 — <strong>consistent with chance</strong>; treat this pairing as inconclusive.`
+      ? `p = ${d.p_value.toFixed(3)} is above 0.05: <strong>consistent with chance</strong>; treat this pairing as inconclusive.`
       : d.q_value_bh != null && d.q_value_bh < 0.05
         ? `p = ${d.p_value.toFixed(3)}, and it <strong>survives false-discovery-rate correction</strong> across all ${d.fdr_family_size} tested specifications (q = ${d.q_value_bh.toFixed(3)}).`
-        : `p = ${d.p_value.toFixed(3)} is below 0.05, but after correcting for the ${d.fdr_family_size || 'many'} specifications tested, q = ${d.q_value_bh != null ? d.q_value_bh.toFixed(3) : 'n/a'} — <strong>not robust</strong> to multiple testing.`,
+        : `p = ${d.p_value.toFixed(3)} is below 0.05, but after correcting for the ${d.fdr_family_size || 'many'} specifications tested, q = ${d.q_value_bh != null ? d.q_value_bh.toFixed(3) : 'n/a'}, so it is <strong>not robust</strong> to multiple testing.`,
     `R² = ${d.r_squared.toFixed(2)}: the rate change and its control jointly explain about <strong>${Math.round(d.r_squared * 100)}%</strong> of month-to-month variation in ${targetLabel}.`,
-    d.lag === 0 ? 'The best fit is at <strong>zero lag</strong> — the same month as the rate change.' : `The best fit is at a <strong>${d.lag}-month lag</strong>.`,
+    d.lag === 0 ? 'The best fit is at <strong>zero lag</strong>, the same month as the rate change.' : `The best fit is at a <strong>${d.lag}-month lag</strong>.`,
   ];
 }
 
@@ -480,7 +480,7 @@ function renderPanel() {
   panel.innerHTML = `
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-1">
       <div style="min-width:0">
-        <h4 class="mb-1">${esc(countryName(active.country))} — ${esc(sec)}</h4>
+        <h4 class="mb-1">${esc(countryName(active.country))} · ${esc(sec)}</h4>
         <div class="small text-muted">${rateBasis === 'real' ? 'Real' : 'Nominal'} rate vs. ${targetLabel} · Control: ${d ? (d.control ? esc(d.control.replace(/_/g, ' ')) + ' (auto-selected)' : 'none') : 'n/a'} · ${d ? `best lag t+${d.lag}` : 'lag n/a'}</div>
       </div>
       <div class="d-flex flex-column align-items-end gap-2">
