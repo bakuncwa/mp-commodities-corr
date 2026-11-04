@@ -357,7 +357,10 @@ def run_extraction(raw_path: Path | None = None, gcs_bucket: str | None = None, 
 
     # --- Pass 2: LLM refinement, newest first, in batches. ---
     client = _client()
-    pending = sorted(_load_queue(store), key=lambda a: a.get("published") or "", reverse=True)
+    # Sort on parsed dates: raw strings mix RFC-822 ("Thu, ...") and ISO-8601, and
+    # letters sort after digits, which would put old-format backlog ahead of new articles.
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    pending = sorted(_load_queue(store), key=lambda a: _published_utc(a.get("published")) or oldest, reverse=True)
     budget_used = _budget_used_today(store)
 
     def spend() -> bool:
