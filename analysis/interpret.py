@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -63,13 +64,26 @@ def _cache_key(country: str, sector: str, rate_basis: str, target: str, control:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
+# Without a timeout, overloaded Gemini requests hung until Cloud Run's 300 s limit.
+GEMINI_TIMEOUT_MS = 8000
+FAILURE_COOLDOWN_S = 300  # after a failure, fail fast for this long instead of waiting on each request
+_gemini_retry_at = 0.0
+
+
 def _call_gemini(prompt: str) -> str:
+    global _gemini_retry_at
+    if time.monotonic() < _gemini_retry_at:
+        raise RuntimeError("Gemini recently failed; skipping until the cooldown ends.")
     from google import genai
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set — cannot generate a dynamic interpretation.")
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    client = genai.Client(api_key=api_key, http_options={"timeout": GEMINI_TIMEOUT_MS})
+    try:
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+    except Exception:
+        _gemini_retry_at = time.monotonic() + FAILURE_COOLDOWN_S
+        raise
     text = (response.text or "").strip()
     if not text:
         raise RuntimeError("Gemini returned an empty response.")
