@@ -276,7 +276,7 @@ Effect sizes are weak (|*r*| < 0.26). For AU/lithium, empirical control selectio
 
 ### LLM layer
 
-- **Rule tagger (all articles):** dictionary classifier (Loughran & McDonald, 2011; Apel & Blix Grimaldi, 2014). Countries are matched case-sensitively, longest first, over 218 names plus central banks, capitals and sector companies, with exclusion sentinels ("Latin America", "Bank of America"). Sector lexicons are atomized per commodity. Stance is hawkish − dovish term count; sentiment is (pos − neg)/(pos + neg). It tags 445 articles in ~0.4 s. Its main precision limit is generic policy vocabulary: tech-trade headlines mentioning "restrictions" can be tagged *market regulation*. LLM refinement corrects these, and the UI marks each article `auto` or `LLM`.
+- **Rule tagger (all articles):** dictionary classifier (Loughran & McDonald, 2011; Apel & Blix Grimaldi, 2014). Countries are matched case-sensitively, longest first, over 218 names plus central banks, capitals and sector companies, with exclusion sentinels ("Latin America", "Bank of America"). Sector lexicons are atomized per commodity. Stance is hawkish − dovish term count; sentiment is (pos − neg)/(pos + neg). It tags 445 articles in ~0.4 s. Its main precision limit is generic policy vocabulary: tech-trade headlines mentioning "restrictions" can be tagged *market regulation*. LLM refinement corrects these, and the UI badges refined articles `LLM`.
 - **LLM extraction (refinement):** category-first multi-label classification. `article_category` ∈ {monetary_policy, commodity_stocks} gates which fields are populated: `policy_subtype` for policy articles, atomized `sector_tags` for commodity articles. Also extracted: `country_codes`, `sentiment_score` ∈ [−1, 1], `policy_stance` ∈ {contractionary, expansionary, neutral} and `mechanisms`. Free-tier prompts may be used by Google for training; inputs are public news.
 - **Interpretation (`/api/interpret`):** Gemini paraphrases only the active result's statistics (direction, |partial *r*| band 0.3/0.5, *p* vs 0.05, *R*², lag). Responses are SHA-256-cached. On failure the endpoint returns `503` and the frontend falls back to a deterministic rule-based summary.
 
@@ -314,7 +314,7 @@ Policy direction is forecastable; magnitude is not, beyond a marginal gain. Tree
 | Article tagging | Hardcoded lexicons (rules) first; LLM refines | Deterministic, auditable, zero marginal cost; the LLM adds nuance only where quota allows | Gemini free tier (≤15 calls/day); Cloud Functions free tier |
 | Statistical inference | Closed-form estimators, no tuning; only lag (0–3) and one control selected empirically | Small monthly samples favour low-variance estimators; closed forms are exact and cheap | One monthly Cloud Run job (seconds of vCPU) |
 | Forecasting / classification | Fitted models with time-series-CV hyperparameter search | Only where it measurably beats a benchmark (direction: AUC 0.83 vs 0.63); magnitude models stay notebook-only | Hike classifier: one monthly fit in the existing analysis job (~1 min of 2 vCPU, inside Cloud Run's free tier); scikit-learn only in the analysis image |
-| Constants | Hardcoded: `MIN_OBS = 8`, \|r\| bands 0.3/0.5, α = 0.05, budget 15/day, batch 20, TTL 3600 s | Conventions or quota arithmetic, not learnable from the data | — |
+| Constants | Hardcoded: `MIN_OBS = 8`, \|r\| bands 0.3/0.5, α = 0.05, budget 15/day, batch 20, TTL 3600 s | Conventions or quota arithmetic, not learnable from the data | None |
 | Storage / serving | BigQuery (partitioned `fact_article`), bulk MERGE, API TTL caches, Firebase static hosting | Fewer queries; static assets off Cloud Run | Within 10 GB storage / 1 TB query / 2M Cloud Run requests free quotas |
 
 Free-tier constraints honoured: 3 Scheduler jobs, 120 Cloud Build min/day, 10 GB BigQuery storage, 0.5 GB Artifact Registry (slim multi-stage images, cleanup policy), and the Gemini daily quota.
@@ -329,9 +329,9 @@ Free-tier constraints honoured: 3 Scheduler jobs, 120 Cloud Build min/day, 10 GB
 | `GET /api/correlation` | `country`, `sector`, `rate_basis`, `target`, `control?`, `start_date`, `end_date` | *r*, partial *r*, *p*, BH *q* (request swapped into the batch family), *R*², lag, control used |
 | `GET /api/interpret` | correlation inputs + statistics | Cached LLM interpretation, or `503` |
 | `GET /api/articles` | `country`, `sector`, `article_category`, dates | Tagged articles incl. `tagger` (`rules`/`llm`); the UI falls back to worldwide when a country has none |
-| `GET /api/pairs` | — | Pairs with results and their latest *r*/*p* per basis × target (map colouring) |
-| `GET /api/geo` | — | Name, region, coordinates for all 218 economies |
-| `GET /api/forecast` | — | Latest hike-probability run: per-country *P*(hike next month), walk-forward ROC-AUC, base rate, drivers |
+| `GET /api/pairs` | None | Pairs with results and their latest *r*/*p* per basis × target (map colouring) |
+| `GET /api/geo` | None | Name, region, coordinates for all 218 economies |
+| `GET /api/forecast` | None | Latest hike-probability run: per-country *P*(hike next month), walk-forward ROC-AUC, base rate, drivers |
 | `GET /api/export` | `scope`, `format` ∈ {csv, xlsx, pdf}, filters | File of the current filtered view (separate Cloud Run service) |
 
 Frontend deep links: `?country=US&sector=semiconductors` opens a pair, `?layer=hike` opens the forecast map layer, and `?api=` overrides the backend.
@@ -400,7 +400,7 @@ Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app
 | Next-month rate-hike forecast | Live news feed (rules-first tagging) |
 | --- | --- |
 | ![Hike forecast](images/04-hike-forecast.png) | ![News feed](images/05-news-feed.png) |
-| US: 75% for Nov 2026, 6.6× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
+| US: 75% for Nov 2026, 6.6× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `LLM` badge on Gemini-refined articles |
 
 <p align="center"><img src="images/06-mobile.png" alt="Mobile view at 390 px" width="320"><br><em>Mobile (390 px): stacked layout, no horizontal scroll</em></p>
 

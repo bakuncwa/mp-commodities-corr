@@ -44,7 +44,9 @@ resource "google_cloud_run_v2_service" "api_main" {
         }
       }
       resources {
-        limits = { cpu = "1", memory = "512Mi" }
+        limits            = { cpu = "1", memory = "512Mi" }
+        cpu_idle          = true # CPU only while serving requests
+        startup_cpu_boost = true # shortens cold starts (pandas, BigQuery client imports)
       }
     }
     scaling {
@@ -93,7 +95,9 @@ resource "google_cloud_run_v2_service" "api_export" {
         value = var.bq_dataset
       }
       resources {
-        limits = { cpu = "1", memory = "1Gi" } # openpyxl/reportlab need more headroom than the main API
+        limits            = { cpu = "1", memory = "1Gi" } # openpyxl/reportlab need more headroom than the main API
+        cpu_idle          = true                          # CPU only while serving requests
+        startup_cpu_boost = true                          # shortens cold starts (pandas, BigQuery client imports)
       }
     }
     scaling {

@@ -26,7 +26,7 @@ from datetime import date, datetime, timezone
 
 import numpy as np
 import pandas as pd
-from scipy import stats
+from scipy.special import stdtr  # not scipy.stats: importing it adds ~30% to API cold starts
 
 from common.db import get_store, new_id
 from common.seed import COUNTRY_SECTOR_PAIRS
@@ -124,7 +124,7 @@ def _pvalue(r: float, n: int, k: int = 0) -> float:
     if abs(r) >= 1:
         return 0.0
     t = r * np.sqrt(dof / (1 - r * r))
-    return float(2 * stats.t.sf(abs(t), dof))
+    return float(2 * stdtr(dof, -abs(t)))
 
 
 def _pearson_np(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
