@@ -33,13 +33,14 @@
   .prob-base{ position:absolute; top:-.25rem; bottom:-.25rem; width:2px; background:#1a1a1a; }
   .driver-row{ display:grid; grid-template-columns:minmax(0,1fr) 40%; gap:.75rem; align-items:center; font-size:.8rem; }
   .driver-bar{ height:.45rem; background:#c9bfae; border-radius:.2rem; }
+  .section-title{ font-size:.9rem; font-weight:600; }
   .feed-list{ max-height:560px; overflow-y:auto; }
   .feed-list .list-group-item a{ color:inherit; text-decoration:none; }
   .feed-list .list-group-item a:hover{ text-decoration:underline; }
   .interpret p{ font-size:.875rem; line-height:1.65; }
   @media (min-width:1200px){ .sticky-panel{ position:sticky; top:1rem; } }
   .navbar-brand{ white-space:normal; }
-  .toolbar > select, .toolbar > input{ flex:1 1 9rem; min-width:0; max-width:14rem; }
+  .toolbar > select, .toolbar > input{ flex:1 1 9rem; min-width:0; }
   .pair-chip{ white-space:normal; text-align:left; }
   @media (max-width:575.98px){ .navbar-brand{ font-size:1rem; letter-spacing:.08em; } }
 </style>
@@ -63,7 +64,6 @@
     <div class="col-xl-7">
       <div class="card">
         <div class="card-header d-flex flex-wrap gap-2 align-items-center toolbar">
-          <h6 class="mb-0 me-auto">Policy activity — world</h6>
           <div class="btn-group btn-group-sm" role="group" aria-label="Map layer">
             <button class="btn btn-primary" data-layer="correlation">Correlation</button>
             <button class="btn btn-outline-primary" data-layer="hike">Hike probability</button>
@@ -80,10 +80,7 @@
         </div>
         <div id="map" role="img" aria-label="World map: one marker per country, sized by tagged-article volume and coloured by the sign of the rate-to-valuation correlation for the selected sector"></div>
         <div class="card-body">
-          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-            <span class="text-uppercase small text-muted">Featured producer pairs</span>
-            <span class="small text-muted" id="legend"></span>
-          </div>
+          <div class="small text-muted mb-2" id="legend"></div>
           <div class="d-flex flex-wrap gap-2" id="featured"></div>
         </div>
       </div>
@@ -439,14 +436,14 @@ function sigBadge(d) {
 function hikeSection() {
   const f = (forecast.countries || {})[active.country];
   const name = esc(countryName(active.country));
-  if (!f) return `<div class="mt-4 pt-3 border-top"><div class="small text-muted text-uppercase mb-2">Next-month rate hike</div>
+  if (!f) return `<div class="mt-4 pt-3 border-top"><div class="section-title mb-2">Next-month rate hike</div>
     <p class="small text-muted mb-0">No forecast for ${name}: there is no BIS policy-rate series to learn from.</p></div>`;
   const base = forecast.base_rate || 0;
   const maxImp = Math.max(...(forecast.drivers || []).map(x => x.importance), 1e-9);
   const lift = f.p / Math.max(base, 1e-9);
   return `<div class="mt-4 pt-3 border-top">
     <div class="d-flex justify-content-between align-items-baseline mb-2">
-      <div class="small text-muted text-uppercase">Next-month rate hike · ${esc(fmtMonth(f.target))}</div>
+      <div class="section-title">Next-month rate hike, ${esc(fmtMonth(f.target))}</div>
       <div class="stat fs-4 ${f.p >= 0.5 ? 'pos' : ''}">${pct(f.p)}</div>
     </div>
     <div class="prob-track mb-1" role="img" aria-label="Hike probability ${pct(f.p)} against a base rate of ${pct(base)}">
@@ -478,9 +475,8 @@ function renderPanel() {
   panel.innerHTML = `
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-1">
       <div style="min-width:0">
-        <div class="small text-muted text-uppercase">${esc(countryName(active.country))} — ${esc(sec)}</div>
-        <h4 class="mb-1">${rateBasis === 'real' ? 'Real' : 'Nominal'} rate vs. ${targetLabel}</h4>
-        <div class="small text-muted">Control: ${d ? (d.control ? esc(d.control.replace(/_/g, ' ')) + ' (auto-selected)' : 'none') : 'n/a'} · ${d ? `best lag t+${d.lag}` : 'lag n/a'}</div>
+        <h4 class="mb-1">${esc(countryName(active.country))} — ${esc(sec)}</h4>
+        <div class="small text-muted">${rateBasis === 'real' ? 'Real' : 'Nominal'} rate vs. ${targetLabel} · Control: ${d ? (d.control ? esc(d.control.replace(/_/g, ' ')) + ' (auto-selected)' : 'none') : 'n/a'} · ${d ? `best lag t+${d.lag}` : 'lag n/a'}</div>
       </div>
       <div class="d-flex flex-column align-items-end gap-2">
         ${d ? sigBadge(d) : ''}
@@ -517,13 +513,12 @@ function renderPanel() {
       </tbody>
     </table>
 
-    <div class="small text-muted text-uppercase mt-4 mb-2">Best-fit lag</div>
+    <div class="section-title mt-4 mb-2">Best-fit lag</div>
     <div class="lag-bars">
       ${[0, 1, 2, 3].map(t => `<div class="bar ${t === d.lag ? 'best' : ''}"><div class="fill" style="height:${t === d.lag ? 64 : 16}px"></div><small class="${t === d.lag ? 'fw-bold' : 'text-muted'}">t+${t}</small></div>`).join('')}
     </div>` : ''}
 
     <div class="interpret border-start border-3 ps-3 mt-4">
-      <div class="small text-muted text-uppercase mb-2">What this result says</div>
       ${interpretHtml}
     </div>
     ${hikeSection()}`;

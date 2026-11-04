@@ -373,7 +373,7 @@ analysis/   correlation_regression.py (batch + kernels + BH q-values), forecast.
             interpret.py (LLM interpretation + cache), Dockerfile
 api/        main.py (FastAPI), export.py (CSV/XLSX/PDF service), Dockerfile, Dockerfile.export
 frontend/   index.html (Bootswatch Lux, Leaflet world map with correlation / hike layers, correlation panel, article feed)
-images/     README demo screenshots (live production site)
+images/     README demo screenshots (production data)
 infra/      Terraform (BigQuery, Functions, Cloud Run, Scheduler, Firebase, budget), Cloud Build
 notebooks/  01_etl_pipeline.ipynb (ingest, tagging, rules-vs-LLM agreement)
             02_correlation_regression.ipynb (engines cross-check, diagnostics, Lasso, FDR correction)
@@ -386,7 +386,7 @@ Production inference and tagging live in `.py` modules, because Cloud Functions 
 
 ## Demo
 
-Screenshots of the live site ([mp-commodities-corr.web.app](https://mp-commodities-corr.web.app)), taken 2026-10-20 against production data. Desktop views at 1440 px, the mobile view at a true 390 px viewport.
+Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app), taken 2026-11-03 against production data. Desktop views at 1440 px, the mobile view at a true 390 px viewport.
 
 **Dashboard: world correlation map and US/semiconductors panel** ([`?country=US&sector=semiconductors`](https://mp-commodities-corr.web.app/?country=US&sector=semiconductors)). Markers cover all 218 economies; colour is the sign of *r* for the active basis × target, and size is tagged-article volume.
 
@@ -400,7 +400,7 @@ Screenshots of the live site ([mp-commodities-corr.web.app](https://mp-commoditi
 | Next-month rate-hike forecast | Live news feed (rules-first tagging) |
 | --- | --- |
 | ![Hike forecast](images/04-hike-forecast.png) | ![News feed](images/05-news-feed.png) |
-| US: 69%, 6.1× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
+| US: 68%, 6.0× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `auto` (rules) vs `LLM` (Gemini-refined) provenance |
 
 <p align="center"><img src="images/06-mobile.png" alt="Mobile view at 390 px" width="320"><br><em>Mobile (390 px): stacked layout, no horizontal scroll</em></p>
 
