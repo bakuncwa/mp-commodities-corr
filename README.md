@@ -35,7 +35,7 @@ A serverless GCP application that (i) ingests and tags monetary-policy and commo
 ## Architecture
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#f0f0f0', 'primaryBorderColor': '#4d4d4d', 'primaryTextColor': '#1a1a1a', 'lineColor': '#4d4d4d', 'secondaryColor': '#e0e0e0', 'tertiaryColor': '#ffffff' }}}%%
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'step'}, 'themeVariables': { 'primaryColor': '#f0f0f0', 'primaryBorderColor': '#4d4d4d', 'primaryTextColor': '#1a1a1a', 'lineColor': '#4d4d4d', 'secondaryColor': '#e0e0e0', 'tertiaryColor': '#ffffff' }}}%%
 flowchart TD
     A1["Article RSS feeds<br/>central banks, trade press"]
     A2["Macro indicator sources<br/>BIS, World Bank WDI, FRED"]
@@ -242,7 +242,7 @@ For pair *(c, s)*, rate basis *b* ∈ {nominal, real}, target *y* ∈ {equity va
 `/api/correlation` runs the same `run_one()` synchronously on any date window (≤ a few hundred rows). The optional `control` parameter pins *z*.
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#f0f0f0', 'primaryBorderColor': '#4d4d4d', 'primaryTextColor': '#1a1a1a', 'lineColor': '#4d4d4d', 'secondaryColor': '#e0e0e0', 'tertiaryColor': '#ffffff' }}}%%
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'step'}, 'themeVariables': { 'primaryColor': '#f0f0f0', 'primaryBorderColor': '#4d4d4d', 'primaryTextColor': '#1a1a1a', 'lineColor': '#4d4d4d', 'secondaryColor': '#e0e0e0', 'tertiaryColor': '#ffffff' }}}%%
 flowchart LR
     A["BigQuery<br/>macro + commodity price + equity valuation"]
     B["Bulk fetch (3 queries)<br/>pivot + join on date_key"]
