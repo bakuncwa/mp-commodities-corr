@@ -35,7 +35,7 @@ A serverless GCP application that (i) ingests and tags monetary-policy and commo
 ## Architecture
 
 ```mermaid
-%%{init: {'theme': 'base', 'flowchart': {'curve': 'step'}, 'themeVariables': { 'primaryColor': '#f0f0f0', 'primaryBorderColor': '#4d4d4d', 'primaryTextColor': '#1a1a1a', 'lineColor': '#4d4d4d', 'secondaryColor': '#e0e0e0', 'tertiaryColor': '#ffffff' }}}%%
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'step'}, 'themeVariables': {'primaryColor': '#ffffff', 'primaryBorderColor': '#000000', 'primaryTextColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'mainBkg': '#ffffff', 'nodeBorder': '#000000', 'clusterBkg': '#ffffff', 'clusterBorder': '#000000', 'edgeLabelBackground': '#ffffff', 'attributeBackgroundColorOdd': '#ffffff', 'attributeBackgroundColorEven': '#ffffff'}}}%%
 flowchart TD
     A1["Article RSS feeds<br/>central banks, trade press"]
     A2["Macro indicator sources<br/>BIS, World Bank WDI, FRED"]
@@ -85,7 +85,7 @@ The fix: rules-first tagging so no article waits on quota, 20-article batches wi
 Long-format `fact_macro_indicator` typed by `dim_indicator` means adding a control is a row insert plus a source adapter, with no schema migration. Multi-valued article→country/sector tags use bridge tables. `real_interest_rate` is derived (`policy_rate − cpi_inflation`). WDI annual series are forward-filled to monthly and flagged `is_interpolated`.
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#f0f0f0', 'primaryBorderColor': '#4d4d4d', 'primaryTextColor': '#1a1a1a', 'lineColor': '#4d4d4d', 'secondaryColor': '#e0e0e0', 'tertiaryColor': '#ffffff' }}}%%
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'step'}, 'themeVariables': {'primaryColor': '#ffffff', 'primaryBorderColor': '#000000', 'primaryTextColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'mainBkg': '#ffffff', 'nodeBorder': '#000000', 'clusterBkg': '#ffffff', 'clusterBorder': '#000000', 'edgeLabelBackground': '#ffffff', 'attributeBackgroundColorOdd': '#ffffff', 'attributeBackgroundColorEven': '#ffffff'}}}%%
 erDiagram
   DIM_SOURCE ||--o{ FACT_ARTICLE : publishes
   DIM_DATE ||--o{ FACT_ARTICLE : occurs_on
@@ -242,7 +242,7 @@ For pair *(c, s)*, rate basis *b* ∈ {nominal, real}, target *y* ∈ {equity va
 `/api/correlation` runs the same `run_one()` synchronously on any date window (≤ a few hundred rows). The optional `control` parameter pins *z*.
 
 ```mermaid
-%%{init: {'theme': 'base', 'flowchart': {'curve': 'step'}, 'themeVariables': { 'primaryColor': '#f0f0f0', 'primaryBorderColor': '#4d4d4d', 'primaryTextColor': '#1a1a1a', 'lineColor': '#4d4d4d', 'secondaryColor': '#e0e0e0', 'tertiaryColor': '#ffffff' }}}%%
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'step'}, 'themeVariables': {'primaryColor': '#ffffff', 'primaryBorderColor': '#000000', 'primaryTextColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'mainBkg': '#ffffff', 'nodeBorder': '#000000', 'clusterBkg': '#ffffff', 'clusterBorder': '#000000', 'edgeLabelBackground': '#ffffff', 'attributeBackgroundColorOdd': '#ffffff', 'attributeBackgroundColorEven': '#ffffff'}}}%%
 flowchart LR
     A["BigQuery<br/>macro + commodity price + equity valuation"]
     B["Bulk fetch (3 queries)<br/>pivot + join on date_key"]
