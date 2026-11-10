@@ -16,6 +16,16 @@ Two interchangeable statistics engines, selected by STATS_ENGINE:
 Both give the same r, partial r, p and R² to ~1e-14 (asserted in
 notebooks/02_correlation_regression.ipynb).
 
+Hypotheses (one test per country × sector × rate basis × target):
+  H0: partial correlation between the rate change at t and the target change at
+      t + lag, given the selected control and a linear trend, is zero.
+  H1: it is non-zero (two-sided).
+  Statistic: t = r·sqrt(dof / (1 − r²)), dof = n − k − 2 (k = covariates).
+  Reject at ALPHA per test; the family is every specification in one batch run,
+  adjusted with Benjamini–Hochberg at FDR_Q. The lag (LAGS) and the control
+  (CANDIDATE_CONTROLS) are chosen by the data before the test, so per-test p is
+  optimistic; the FDR-adjusted q is the figure to rely on.
+
 Run directly: `python -m analysis.correlation_regression`
 """
 from __future__ import annotations
@@ -45,6 +55,8 @@ RATE_INDICATORS = {"nominal": "policy_rate", "real": "real_interest_rate"}
 CANDIDATE_CONTROLS = ["fdi_net_inflow", "cpi_inflation", "gdp_growth", "unemployment_rate", "trade_balance", "reer", "gov_debt_pct_gdp"]
 LAGS = [0, 1, 2, 3]
 MIN_OBS = 8  # below this, correlation/regression output is not meaningful
+ALPHA = 0.05  # per-test significance level (two-sided)
+FDR_Q = 0.05  # Benjamini–Hochberg false-discovery-rate target across a batch run
 STATS_ENGINE = os.environ.get("STATS_ENGINE", "numpy").lower()
 if STATS_ENGINE not in ("numpy", "pingouin"):
     raise ValueError(f"STATS_ENGINE must be 'numpy' or 'pingouin', got {STATS_ENGINE!r}")
@@ -229,23 +241,31 @@ def select_best_control(sub: pd.DataFrame, rate_col: str, candidates: list[str])
     Returns (None, None) if no candidate has enough overlapping data, in which
     case the caller falls back to the raw (uncontrolled) correlation."""
     best_name, best = None, None
+    # Arrays are pulled out once and each candidate is a boolean mask over them:
+    # a DataFrame.dropna per candidate was ~70% of batch runtime (profiled).
+    x_all = sub[rate_col].to_numpy(float)
+    y_all = sub["target_shifted"].to_numpy(float)
     for control in candidates:
         if control not in sub.columns:
             continue
-        candidate_sub = sub.dropna(subset=[control])
-        if len(candidate_sub) < MIN_OBS or candidate_sub[control].std() == 0:
+        z_all = sub[control].to_numpy(float)
+        keep = ~np.isnan(z_all)
+        n = int(keep.sum())
+        if n < MIN_OBS:
+            continue
+        z = z_all[keep]
+        if np.std(z, ddof=1) == 0:
             # A constant control (e.g. an annual WDI series flat across the
             # window) adjusts for nothing: the numpy kernel returns NaN for it,
             # while pg.partial_corr's pseudo-inverse silently returns the raw r,
             # which then "wins" whenever real controls shrink |r|.
             continue
-        x = candidate_sub[rate_col].to_numpy(float)
-        y = candidate_sub["target_shifted"].to_numpy(float)
+        x, y = x_all[keep], y_all[keep]
         rxy, _ = pearson(x, y)
-        r, p = partial_corr_1(rxy, x, y, candidate_sub[control].to_numpy(float))
+        r, p = partial_corr_1(rxy, x, y, z)
         if not np.isfinite(r):
             continue  # NaN never compares greater, so it would stick if it came first
-        result = {"r": r, "p": p, "n": len(candidate_sub)}
+        result = {"r": r, "p": p, "n": n}
         if best is None or abs(result["r"]) > abs(best["r"]) or (
             abs(result["r"]) == abs(best["r"]) and result["p"] < best["p"]
         ):
@@ -360,7 +380,7 @@ def run_analysis(controls: list[str] | None = None) -> dict:
         # One family per batch run: every specification tested in this run.
         df["q_value_bh"] = bh_qvalues(df["p_value"])
         store.upsert_df("fact_correlation_result", df, ["result_id"])
-        log.info("BH-FDR: %d of %d results have q < 0.05", int((df["q_value_bh"] < 0.05).sum()), len(df))
+        log.info("BH-FDR: %d of %d results have q < %.2f", int((df["q_value_bh"] < FDR_Q).sum()), len(df), FDR_Q)
 
     log.info("Wrote %d correlation results across %d country/sector pairs", len(results), len(COUNTRY_SECTOR_PAIRS))
     return {"results_written": len(results)}

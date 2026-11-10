@@ -29,7 +29,7 @@ from common.db import get_store
 from common.schema import SECTORS
 from common.countries import ALL_COUNTRIES
 from common.seed import COUNTRIES, COUNTRY_SECTOR_PAIRS, FEATURED_PAIRS
-from analysis.correlation_regression import RATE_INDICATORS, MIN_OBS, bh_qvalues, build_country_panel, run_one, CANDIDATE_CONTROLS
+from analysis.correlation_regression import ALPHA, FDR_Q, RATE_INDICATORS, MIN_OBS, bh_qvalues, build_country_panel, run_one, CANDIDATE_CONTROLS
 from analysis.interpret import get_or_generate_interpretation
 
 app = FastAPI(title="mp-commodities-corr API", version="0.1.0")
@@ -146,7 +146,7 @@ def get_correlation(
         "control": best["control_set"] or None,
         "lag": best["lag"], "pearson_r": best["pearson_r"], "partial_r": best["partial_r"],
         "p_value": best["p_value"], "r_squared": best["r_squared"],
-        "q_value_bh": q_value, "fdr_family_size": family_size,
+        "q_value_bh": q_value, "fdr_family_size": family_size, "alpha": ALPHA, "fdr_q": FDR_Q,
         "rate_change_latest": None if rate_col not in panel.columns else _clean(latest.get(rate_col)),
         "target_change_latest": _clean(latest.get(target_col)),
     }

@@ -34,6 +34,9 @@
   .driver-row{ display:grid; grid-template-columns:minmax(0,1fr) 40%; gap:.75rem; align-items:center; font-size:.8rem; }
   .driver-bar{ height:.45rem; background:#c9bfae; border-radius:.2rem; }
   .section-title{ font-size:.9rem; font-weight:600; }
+  .guide-btn{ width:1.9rem; height:1.9rem; padding:0; border-radius:50%; font-weight:700; letter-spacing:0; }
+  #guide-body p{ line-height:1.6; }
+  #guide-body ul{ padding-left:1.1rem; margin-bottom:0; }
   .feed-list{ max-height:560px; overflow-y:auto; }
   .feed-list .list-group-item a{ color:inherit; text-decoration:none; }
   .feed-list .list-group-item a:hover{ text-decoration:underline; }
@@ -52,10 +55,32 @@
 <nav class="navbar navbar-expand-lg bg-primary" data-bs-theme="dark">
   <div class="container-fluid px-3 px-md-4 flex-wrap gap-1">
     <span class="navbar-brand">Monetary Policy × Commodities</span>
-    <span class="navbar-text small" id="status"><span class="dot none"></span>connecting…</span>
+    <div class="d-flex align-items-center gap-3">
+      <span class="navbar-text small" id="status"><span class="dot none"></span>connecting…</span>
+      <button type="button" class="btn btn-sm btn-outline-light guide-btn" id="guide-open" aria-label="How to read this dashboard" title="How to read this dashboard">?</button>
+    </div>
   </div>
 </nav>
 <div id="api-banner" class="alert alert-warning rounded-0 mb-0 d-none small"></div>
+
+<div class="modal fade" id="guide" tabindex="-1" aria-labelledby="guide-title" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="guide-title"></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body small" id="guide-body"></div>
+      <div class="modal-footer justify-content-between">
+        <span class="small text-muted" id="guide-step"></span>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="guide-back">Back</button>
+          <button type="button" class="btn btn-sm btn-primary" id="guide-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <main class="container-fluid px-3 px-md-4 py-4">
   <div class="row g-4">
@@ -421,21 +446,25 @@ function interpretResult(d) {
   return [
     `A ${rateBasis} rate increase in ${esc(countryName(active.country))} is associated with a <strong>${dir}</strong> in ${targetLabel}, ${controlPhrase} (partial r = ${fmtR(d.partial_r)}).`,
     `At |r| = ${absR.toFixed(2)}, this reads as a <strong>${strength}</strong> relationship (below 0.3 weak, 0.3–0.5 moderate, above 0.5 strong).`,
-    d.p_value >= 0.05
-      ? `p = ${d.p_value.toFixed(3)} is above 0.05: <strong>consistent with chance</strong>; treat this pairing as inconclusive.`
-      : d.q_value_bh != null && d.q_value_bh < 0.05
+    d.p_value >= alpha(d)
+      ? `p = ${d.p_value.toFixed(3)} is above ${alpha(d)}: <strong>consistent with chance</strong>; treat this pairing as inconclusive.`
+      : d.q_value_bh != null && d.q_value_bh < fdrQ(d)
         ? `p = ${d.p_value.toFixed(3)}, and it <strong>survives false-discovery-rate correction</strong> across all ${d.fdr_family_size} tested specifications (q = ${d.q_value_bh.toFixed(3)}).`
-        : `p = ${d.p_value.toFixed(3)} is below 0.05, but after correcting for the ${d.fdr_family_size || 'many'} specifications tested, q = ${d.q_value_bh != null ? d.q_value_bh.toFixed(3) : 'n/a'}, so it is <strong>not robust</strong> to multiple testing.`,
+        : `p = ${d.p_value.toFixed(3)} is below ${alpha(d)}, but after correcting for the ${d.fdr_family_size || 'many'} specifications tested, q = ${d.q_value_bh != null ? d.q_value_bh.toFixed(3) : 'n/a'}, so it is <strong>not robust</strong> to multiple testing.`,
     `R² = ${d.r_squared.toFixed(2)}: the rate change and its control jointly explain about <strong>${Math.round(d.r_squared * 100)}%</strong> of month-to-month variation in ${targetLabel}.`,
     d.lag === 0 ? 'The best fit is at <strong>zero lag</strong>, the same month as the rate change.' : `The best fit is at a <strong>${d.lag}-month lag</strong>.`,
   ];
 }
 
+// Test thresholds come from the API (analysis.correlation_regression.ALPHA / FDR_Q).
+const alpha = d => d.alpha ?? 0.05;
+const fdrQ = d => d.fdr_q ?? 0.05;
+
 // Significance after Benjamini–Hochberg correction across the batch family.
 function sigBadge(d) {
-  if (d.p_value >= 0.05) return '<span class="badge bg-light text-muted">not significant</span>';
-  if (d.q_value_bh != null && d.q_value_bh < 0.05) return '<span class="badge bg-primary" title="Survives Benjamini–Hochberg FDR correction">p < 0.05 · FDR-robust</span>';
-  return '<span class="badge bg-light text-dark border" title="p < 0.05, but q ≥ 0.05 after Benjamini–Hochberg correction">p < 0.05 · not FDR-robust</span>';
+  if (d.p_value >= alpha(d)) return '<span class="badge bg-light text-muted">not significant</span>';
+  if (d.q_value_bh != null && d.q_value_bh < fdrQ(d)) return `<span class="badge bg-primary" title="Survives Benjamini–Hochberg FDR correction at q < ${fdrQ(d)}">p < ${alpha(d)} · FDR-robust</span>`;
+  return `<span class="badge bg-light text-dark border" title="p < ${alpha(d)}, but q ≥ ${fdrQ(d)} after Benjamini–Hochberg correction">p < ${alpha(d)} · not FDR-robust</span>`;
 }
 
 function hikeSection() {
@@ -549,6 +578,54 @@ async function setSpec(basis, tgt) {
 ['start-date', 'end-date'].forEach(id => document.getElementById(id).addEventListener('change', async () => {
   if (active) { await fetchCorrelation(); renderPanel(); await fetchInterpretation(); renderPanel(); }
 }));
+
+// Onboarding guide: opens once on a first visit (?guide=off skips it, e.g. for
+// screenshots) and any time from the ? button in the navbar.
+const GUIDE = [
+  ['What this dashboard shows',
+   `<p>Monthly central-bank policy-rate changes compared with six metal and semiconductor sectors: copper, lithium, nickel, rare earths, cobalt and semiconductors.</p>
+    <p class="mb-0">Correlations cover the 59 economies with a published policy rate. News is tagged for every economy on the map.</p>`],
+  ['The map',
+   `<ul>
+      <li><strong>Correlation</strong> layer: colour is the sign of r for the selected sector (rust positive, teal negative); size is news volume; grey means no rate data.</li>
+      <li><strong>Hike probability</strong> layer: darker means a higher chance of a rate rise next month.</li>
+      <li>Pick a country by clicking its marker, a producer chip, or the country list.</li>
+    </ul>`],
+  ['The correlation panel',
+   `<ul>
+      <li><strong>Pearson r</strong> is the raw link between rate changes and the sector; <strong>partial r</strong> holds the auto-selected macro control and a trend constant.</li>
+      <li><strong>p</strong> tests one result; <strong>q</strong> corrects for the hundreds of results tested, so a result is only <em>FDR-robust</em> when q is below 0.05.</li>
+      <li>Switch between nominal and real rates, and between equity valuation and commodity price. The bars show the best-fitting lag.</li>
+    </ul>`],
+  ['Forecast and news',
+   `<ul>
+      <li><strong>Next-month rate hike</strong>: a random-forest probability, the base rate it compares against, and what drives it. Its out-of-sample ROC-AUC is shown (0.5 is chance).</li>
+      <li><strong>News</strong>: monetary-policy and commodity-stock articles for the selected country. <span class="badge bg-secondary">LLM</span> marks articles refined by Gemini.</li>
+      <li>Correlation is not causation: read these as leads to investigate.</li>
+    </ul>`],
+];
+let guideStep = 0;
+const guideModal = new bootstrap.Modal(document.getElementById('guide'));
+function renderGuide() {
+  const [title, body] = GUIDE[guideStep];
+  document.getElementById('guide-title').textContent = title;
+  document.getElementById('guide-body').innerHTML = body;
+  document.getElementById('guide-step').textContent = `${guideStep + 1} of ${GUIDE.length}`;
+  document.getElementById('guide-back').disabled = guideStep === 0;
+  document.getElementById('guide-next').textContent = guideStep === GUIDE.length - 1 ? 'Done' : 'Next';
+}
+function openGuide() { guideStep = 0; renderGuide(); guideModal.show(); }
+document.getElementById('guide-open').addEventListener('click', openGuide);
+document.getElementById('guide-back').addEventListener('click', () => { guideStep = Math.max(0, guideStep - 1); renderGuide(); });
+document.getElementById('guide-next').addEventListener('click', () => {
+  if (guideStep < GUIDE.length - 1) { guideStep++; renderGuide(); } else guideModal.hide();
+});
+document.getElementById('guide').addEventListener('hidden.bs.modal', () => {
+  try { localStorage.setItem('mpcc-guide-seen', '1'); } catch (e) { /* storage blocked: guide reappears next visit */ }
+});
+let guideSeen = false;
+try { guideSeen = localStorage.getItem('mpcc-guide-seen') === '1'; } catch (e) { guideSeen = false; }
+if (!guideSeen && params.get('guide') !== 'off') openGuide();
 
 init();
 </script>
