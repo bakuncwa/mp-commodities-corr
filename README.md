@@ -236,6 +236,7 @@ For pair *(c, s)*, rate basis *b* ∈ {nominal, real}, target *y* ∈ {equity va
 - **Control selection:** for each candidate *z*, the first-order partial correlation *r*<sub>xy·z</sub> = (*r*<sub>xy</sub> − *r*<sub>xz</sub>*r*<sub>yz</sub>) / √((1−*r*<sub>xz</sub>²)(1−*r*<sub>yz</sub>²)) is computed in O(*n*). The argmax |*r*<sub>xy·z</sub>| wins (ties → lower *p*). Zero-variance controls (undefined *r*<sub>xy·z</sub>) are excluded.
 - **Reported partial *r*:** conditioned on {*z*\*, linear time trend}, from the precision matrix *P* = Σ⁺: *r* = −*P*<sub>xy</sub> / √(*P*<sub>xx</sub>*P*<sub>yy</sub>).
 - **Fit:** OLS Δy ~ 1 + Δrate + *z*\*, reporting *R*².
+- **Hypotheses:** H₀: ρ<sub>xy·z,trend</sub> = 0 against H₁: ρ ≠ 0 for every specification; α = 0.05 per test (`ALPHA`), Benjamini–Hochberg FDR at *q* < 0.05 across each batch run (`FDR_Q`). Parameters are named constants in `analysis/correlation_regression.py` and are documented in notebooks 02 and 03, whose forecasting hypotheses are Diebold–Mariano for magnitude and ROC-AUC against 0.5 and persistence for direction.
 - **Inference:** two-sided *t*-test, *t* = *r*√(dof / (1−*r*²)), dof = *n* − *k* − 2.
 - **Lag selection:** the ℓ maximizing |Pearson *r*|, with `MIN_OBS = 8`.
 
@@ -300,6 +301,8 @@ Policy direction is forecastable; magnitude is not, beyond a marginal gain. Tree
 | Change | Effect (1,308 pairs unless noted) |
 | --- | --- |
 | Pingouin → closed-form NumPy/SciPy kernels (Pingouin kept as `STATS_ENGINE=pingouin`) | Compute 63.5 s → 17.7 s (3.6×), identical to 3.1e-15. Zero-variance controls are now excluded under both engines; Pingouin's pseudo-inverse had returned the raw *r* for them, letting a constant "control" win selection |
+| Control selection: per-candidate `DataFrame.dropna` → NumPy masks over arrays extracted once per lag | Batch 9.2 s → 4.5 s (2.0×), bit-identical results; profiling showed 72% of runtime in pandas overhead and 11% in the maths, so C++ or GPU kernels would not help (the maths already runs in OpenBLAS, and scikit-learn's forests in Cython/C++) |
+| API cold start: startup CPU boost, request-based CPU, `scipy.special` instead of `scipy.stats`, one-instance wake-up before parallel fetches | First response after idle 13–17 s → 9.5–11.2 s (production logs); the remainder is container start for the 270 MB image |
 | Per-pair queries → one bulk fetch, pivot per country | 3 warehouse queries per batch instead of 3 per pair; panel build 25.2 s → 1.9 s |
 | Macro ingest: per-country → bulk all-country requests | ~120 → 11 HTTP requests; 504k rows across 216 countries in 6.6 s; vectorized annual→monthly expansion (`merge_asof`) |
 | Article tagging: 1 LLM call/article → rules + 20-article batches | 15 → 300 LLM-refined articles/day within the same quota; 100% of articles tagged immediately |
@@ -334,7 +337,7 @@ Free-tier constraints honoured: 3 Scheduler jobs, 120 Cloud Build min/day, 10 GB
 | `GET /api/forecast` | None | Latest hike-probability run: per-country *P*(hike next month), walk-forward ROC-AUC, base rate, drivers |
 | `GET /api/export` | `scope`, `format` ∈ {csv, xlsx, pdf}, filters | File of the current filtered view (separate Cloud Run service) |
 
-Frontend deep links: `?country=US&sector=semiconductors` opens a pair, `?layer=hike` opens the forecast map layer, and `?api=` overrides the backend.
+A four-step guide opens on a first visit and from the **?** button in the navbar (`?guide=off` skips it). Frontend deep links: `?country=US&sector=semiconductors` opens a pair, `?layer=hike` opens the forecast map layer, and `?api=` overrides the backend.
 
 All query values are allowlist-validated before reaching SQL. Empty states render "No results found." without exposing internals.
 

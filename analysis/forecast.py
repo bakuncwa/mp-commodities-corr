@@ -13,6 +13,17 @@ Each run stores, per country: the probability of a hike in the month after the
 latest observed month, plus run-level walk-forward ROC-AUC, the hike base rate
 and permutation-importance drivers, so the UI can show how much to trust it.
 
+Hypotheses and evaluation:
+  H0: the classifier ranks hike and non-hike months no better than chance
+      (ROC-AUC = 0.5), and no better than persistence (repeat last month's
+      move). Walk-forward ROC-AUC over WALK_FORWARD_SPLITS expanding-window
+      folds on calendar months is stored with every run (cv_roc_auc).
+  The magnitude forecast is not deployed: in notebooks/03 the Diebold–Mariano
+  test cannot reject equal accuracy against a no-change forecast for most models.
+
+Parameters: see the constants below (lags, staleness, publication lags) and
+_model() (300 trees, min leaf 20, 30% features per split, balanced classes).
+
 Run directly: `python -m analysis.forecast` (also invoked by the Cloud Run job
 after analysis.correlation_regression).
 """
@@ -37,6 +48,7 @@ MIN_RATE_MONTHS = 60
 START = "1995-01"
 MODEL = "random_forest_v1"
 EURO_ANCHOR = "DE"
+WALK_FORWARD_SPLITS = 5  # expanding-window folds for the stored out-of-sample ROC-AUC
 MAX_STALENESS_MONTHS = 3
 # Months an indicator is published after the others (BIS effective exchange
 # rates trail policy rates by one month). Shifting it keeps every feature
@@ -79,7 +91,7 @@ def build_frame(store) -> pd.DataFrame:
     return frame.dropna(subset=[c for c in frame if c not in ("hike", "country_code", "date_key")])
 
 
-def walk_forward_auc(train: pd.DataFrame, cols: list[str], n_splits: int = 5) -> tuple[float, object, pd.DataFrame]:
+def walk_forward_auc(train: pd.DataFrame, cols: list[str], n_splits: int = WALK_FORWARD_SPLITS) -> tuple[float, object, pd.DataFrame]:
     """Mean ROC-AUC over expanding-window folds on calendar months; also
     returns the last fold's model and test set for permutation importance."""
     from sklearn.metrics import roc_auc_score
