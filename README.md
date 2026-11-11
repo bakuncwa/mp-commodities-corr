@@ -389,7 +389,7 @@ Production inference and tagging live in `.py` modules, because Cloud Functions 
 
 ## Demo
 
-Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app), taken 2026-11-03 against production data. Desktop views at 1440 px, the mobile view at a true 390 px viewport.
+Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app), taken 2026-11-11 against production data. Desktop views at 1440 px, the mobile view at a true 390 px viewport.
 
 **Dashboard: world correlation map and US/semiconductors panel** ([`?country=US&sector=semiconductors`](https://mp-commodities-corr.web.app/?country=US&sector=semiconductors)). Markers cover all 218 economies; colour is the sign of *r* for the active basis × target, and size is tagged-article volume.
 
@@ -404,6 +404,10 @@ Screenshots of [mp-commodities-corr.web.app](https://mp-commodities-corr.web.app
 | --- | --- |
 | ![Hike forecast](images/04-hike-forecast.png) | ![News feed](images/05-news-feed.png) |
 | US: 75% for Nov 2026, 6.6× the 11% base rate; out-of-sample ROC-AUC 0.83; permutation-importance drivers | Category tabs, sentiment/stance/subtype badges, `LLM` badge on Gemini-refined articles |
+
+**Onboarding guide.** Four steps open on a first visit and from the **?** button in the navbar.
+
+![Onboarding guide](images/07-onboarding-guide.png)
 
 <p align="center"><img src="images/06-mobile.png" alt="Mobile view at 390 px" width="320"><br><em>Mobile (390 px): stacked layout, no horizontal scroll</em></p>
 
