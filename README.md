@@ -21,7 +21,7 @@ A serverless GCP application that (i) ingests and tags monetary-policy and commo
 | Layer | Tools |
 | --- | --- |
 | Ingestion | `feedparser`, BIS / World Bank WDI / FRED / Pink Sheet APIs, `yfinance`; Cloud Functions + Cloud Scheduler |
-| NLP tagging | Deterministic dictionary tagger (`etl/rule_tagger.py`) for every article; Gemini batch refinement (20 articles/call, `response_schema`-constrained JSON, temperature 0.1, `flash` → `flash-lite` fallback) |
+| NLP tagging | Deterministic dictionary tagger (`etl/rule_tagger.py`) for every article; Gemini Flash batch refinement: `gemini-flash-latest`, falling back to `gemini-flash-lite-latest` (20 articles/call, `response_schema`-constrained JSON, temperature 0.1). Panel interpretations also use `gemini-flash-latest`. Both are Google's rolling aliases, so newer Flash versions arrive without code changes (two weeks' notice), on the free tier |
 | Statistics | Two engines via `STATS_ENGINE`: NumPy/SciPy closed-form kernels (default) or Pingouin (reference); identical to 3.1e-15 across 928 local results |
 | ML (notebooks) | scikit-learn: ridge, lasso, elastic net, SVR/SVC, k-NN, random forest, histogram gradient boosting, MLP, logistic regression, Gaussian naive Bayes |
 | Distributed (opt-in) | Apache Spark 3.5 (`groupBy().applyInPandas`) |
@@ -314,7 +314,7 @@ Policy direction is forecastable; magnitude is not, beyond a marginal gain. Tree
 
 | Layer | Approach | Why | GCP cost |
 | --- | --- | --- | --- |
-| Article tagging | Hardcoded lexicons (rules) first; LLM refines | Deterministic, auditable, zero marginal cost; the LLM adds nuance only where quota allows | Gemini free tier (≤15 calls/day); Cloud Functions free tier |
+| Article tagging | Hardcoded lexicons (rules) first; LLM refines | Deterministic, auditable, zero marginal cost; the LLM adds nuance only where quota allows | Gemini free tier (≤15 calls/day); Cloud Functions free tier. At current volume (~3M input / 1.4M output tokens a month), paid Flash would cost about $7.50/month ($15 from 2027) and Pro, which has no free tier, about $23 (Google pricing, Nov 2026) |
 | Statistical inference | Closed-form estimators, no tuning; only lag (0–3) and one control selected empirically | Small monthly samples favour low-variance estimators; closed forms are exact and cheap | One monthly Cloud Run job (seconds of vCPU) |
 | Forecasting / classification | Fitted models with time-series-CV hyperparameter search | Only where it measurably beats a benchmark (direction: AUC 0.83 vs 0.63); magnitude models stay notebook-only | Hike classifier: one monthly fit in the existing analysis job (~1 min of 2 vCPU, inside Cloud Run's free tier); scikit-learn only in the analysis image |
 | Constants | Hardcoded: `MIN_OBS = 8`, \|r\| bands 0.3/0.5, α = 0.05, budget 15/day, batch 20, TTL 3600 s | Conventions or quota arithmetic, not learnable from the data | None |
