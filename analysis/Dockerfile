@@ -2,7 +2,7 @@
 # on the Cloud Scheduler cadence set in infra/scheduler.tf, then exits.
 FROM python:3.11-slim AS builder
 WORKDIR /build
-COPY requirements.txt requirements-analysis.txt ./
+COPY requirements-analysis.txt ./
 RUN pip install --no-cache-dir --user -r requirements-analysis.txt
 
 FROM python:3.11-slim

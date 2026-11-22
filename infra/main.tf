@@ -39,6 +39,7 @@ locals {
     "run.googleapis.com",
     "cloudscheduler.googleapis.com",
     "bigquery.googleapis.com",
+    "bigquerystorage.googleapis.com",
     "storage.googleapis.com",
     "secretmanager.googleapis.com",
     "artifactregistry.googleapis.com",
@@ -77,6 +78,13 @@ resource "google_project_iam_member" "app_bigquery" {
 resource "google_project_iam_member" "app_bigquery_job_user" {
   project = var.project_id
   role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.app.email}"
+}
+
+# Storage Read API sessions, used by the analysis job to stream query results as Arrow.
+resource "google_project_iam_member" "app_bigquery_read_session" {
+  project = var.project_id
+  role    = "roles/bigquery.readSessionUser"
   member  = "serviceAccount:${google_service_account.app.email}"
 }
 

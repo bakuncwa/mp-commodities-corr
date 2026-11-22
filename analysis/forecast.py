@@ -63,12 +63,16 @@ def _model():
                                   class_weight="balanced", n_jobs=-1, random_state=0)
 
 
-def build_frame(store) -> pd.DataFrame:
+def build_frame(store, macro: pd.DataFrame | None = None) -> pd.DataFrame:
     """One row per country-month: lagged feature changes, plus `hike` (next
-    month's policy-rate change > 0), which is NaN for the latest month."""
-    macro = store.query_df(
-        f"SELECT country_code, date_key, indicator_id, value_change FROM fact_macro_indicator WHERE date_key >= '{START}'"
-    )
+    month's policy-rate change > 0), which is NaN for the latest month.
+    `macro` reuses rows the job already loaded (see load_macro)."""
+    if macro is None:
+        macro = store.query_df(
+            f"SELECT country_code, date_key, indicator_id, value_change FROM fact_macro_indicator WHERE date_key >= '{START}'"
+        )
+    else:
+        macro = macro[macro["date_key"] >= START]
     glob = macro[macro.country_code.isna()].pivot_table(index="date_key", columns="indicator_id", values="value_change", aggfunc="first")
     ctry = macro[macro.country_code.notna()].pivot_table(index=["country_code", "date_key"], columns="indicator_id",
                                                          values="value_change", aggfunc="first").reset_index()
@@ -117,9 +121,9 @@ def drivers(model, test: pd.DataFrame, cols: list[str], top: int = 5) -> list[di
     return [{"indicator": k, "importance": round(float(v), 4)} for k, v in by_ind.items()]
 
 
-def run_forecast(write: bool = True) -> pd.DataFrame:
+def run_forecast(write: bool = True, macro: pd.DataFrame | None = None) -> pd.DataFrame:
     store = get_store()
-    frame = build_frame(store)
+    frame = build_frame(store, macro)
     cols = [c for c in frame if c not in ("date_key", "country_code", "hike")]
     train = frame[frame.hike.notna()].sort_values("date_key")
     auc, fold_model, fold_test = walk_forward_auc(train, cols)

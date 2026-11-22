@@ -1,5 +1,14 @@
-# Cloud Run analysis job (analysis/Dockerfile): runtime deps plus scikit-learn
-# for analysis/forecast.py. Kept out of requirements.txt so the API image and
-# Cloud Function packages stay slim.
--r requirements.txt
-scikit-learn>=1.4,<2
+# Cloud Run analysis job (analysis/Dockerfile): only what analysis/ and common/
+# import at runtime. Deliberately not `-r requirements.txt`: the job does not
+# need the API server, feed/LLM/export libraries or DuckDB (local dev only),
+# and every extra package lengthens cold starts. Keep shared pins in sync
+# with requirements.txt.
+python-dotenv>=1.0,<2
+pandas>=2.1,<3
+numpy>=1.26,<2
+scipy>=1.11,<2
+google-cloud-bigquery>=3.25,<4
+google-cloud-bigquery-storage>=2.24,<3  # Storage Read API: Arrow streams instead of paginated REST JSON
+db-dtypes>=1.2,<2
+pyarrow>=14,<26           # pyarrow 26 requires NumPy 2; numpy is pinned <2
+scikit-learn>=1.4,<2      # analysis/forecast.py

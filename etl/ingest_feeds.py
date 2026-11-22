@@ -22,7 +22,7 @@ import json
 import logging
 import os
 import tempfile
-import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,6 +44,9 @@ RAW_DIR = Path(tempfile.gettempdir()) if GCS_RAW_BUCKET else Path(__file__).reso
 SEEN_URLS_PATH = Path(__file__).resolve().parent.parent / "data" / "cache" / "seen_article_urls.json"
 SEEN_URLS_GCS_BLOB = "_state/seen_article_urls.json"
 STALE_AFTER_CONSECUTIVE_EMPTY = 5  # matches the README's "N consecutive empty/failed fetches" health check
+
+
+FETCH_WORKERS = 8  # concurrent feed fetches; each feed is fetched once per run
 
 
 def load_feeds() -> list[dict]:
@@ -122,8 +125,12 @@ def run_ingest() -> dict:
     all_new: list[dict] = []
     feed_health: dict[str, str] = {}
 
-    for feed_cfg in feeds:
-        articles, healthy = fetch_feed(feed_cfg)
+    # Feeds are on different hosts and each fetch is a network wait, so threads
+    # overlap them (map keeps feed order, so dedup and logs stay deterministic).
+    with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+        fetched = list(pool.map(fetch_feed, feeds))
+
+    for feed_cfg, (articles, healthy) in zip(feeds, fetched):
         feed_health[feed_cfg["name"]] = "healthy" if healthy else "unhealthy"
 
         new_for_feed = 0
@@ -135,7 +142,6 @@ def run_ingest() -> dict:
             all_new.append(art)
             new_for_feed += 1
         log.info("%-28s %3d entries, %3d new", feed_cfg["name"], len(articles), new_for_feed)
-        time.sleep(0.3)  # be polite to shared free-tier endpoints
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RAW_DIR / f"articles_{run_ts}.json"
