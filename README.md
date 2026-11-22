@@ -63,7 +63,7 @@ flowchart TD
 
 | Job | Trigger | Output |
 | --- | --- | --- |
-| `etl/ingest_feeds.py` | Scheduler, 3×/day | SHA-256(URL)-deduplicated raw JSON → GCS |
+| `etl/ingest_feeds.py` | Scheduler, 3×/day | Feeds fetched concurrently (8 threads), SHA-256(URL)-deduplicated raw JSON → GCS |
 | `etl/extract_and_tag.py` | GCS object-finalize | Pass 1: every article rule-tagged and written (`tagger='rules'`). Pass 2: queued articles refined newest-first by Gemini, 20 per call, ≤15 calls/day, overwriting with `tagger='llm'` |
 | `etl/ingest_macro_indicators.py` | (bundled below) | 12 bulk requests cover all countries: BIS ×3, WDI ×6, FRED ×3 (daily series fetched as monthly averages). The latest finished month comes provisionally from BIS daily policy rates (flagged `is_interpolated`) until the monthly figure is published |
 | `etl/ingest_macro_indicators.py` + `ingest_market_data.py` | Scheduler, monthly (one combined function, which keeps the job count within the 3-job free tier) | `fact_macro_indicator`, `fact_commodity_price`, `fact_equity_valuation` |
@@ -303,6 +303,10 @@ Policy direction is forecastable; magnitude is not, beyond a marginal gain. Tree
 | Pingouin → closed-form NumPy/SciPy kernels (Pingouin kept as `STATS_ENGINE=pingouin`) | Compute 63.5 s → 17.7 s (3.6×), identical to 3.1e-15. Zero-variance controls are now excluded under both engines; Pingouin's pseudo-inverse had returned the raw *r* for them, letting a constant "control" win selection |
 | Control selection: per-candidate `DataFrame.dropna` → NumPy masks over arrays extracted once per lag | Batch 9.2 s → 4.5 s (2.0×), bit-identical results; profiling showed 72% of runtime in pandas overhead and 11% in the maths, so C++ or GPU kernels would not help (the maths already runs in OpenBLAS, and scikit-learn's forests in Cython/C++) |
 | API cold start: startup CPU boost, request-based CPU, `scipy.special` instead of `scipy.stats`, one-instance wake-up before parallel fetches | First response after idle 13–17 s → 9.5–11.2 s (production logs); the remainder is container start for the 270 MB image |
+| BigQuery reads via the Storage Read API (`google-cloud-bigquery-storage`, Arrow streams) instead of paginated REST JSON | Full macro table (528,877 rows) 15.7 s → 2.3 s (6.8×) |
+| Analysis job reads the macro table once and shares it between the correlation batch and the forecast; remaining queries run concurrently on threads | One full-table read per run instead of two, with identical results |
+| Analysis image installs only what the job imports (`requirements-analysis.txt`: no API server, feed/LLM/export libraries or DuckDB) | Dependencies 74 → 42 packages (635 MB → 527 MB), for faster job cold starts |
+| Feed ingest fetches the 11 feeds concurrently (threads; each fetch is a network wait) | 8.3 s → 1.2 s |
 | Per-pair queries → one bulk fetch, pivot per country | 3 warehouse queries per batch instead of 3 per pair; panel build 25.2 s → 1.9 s |
 | Macro ingest: per-country → bulk all-country requests | ~120 → 11 HTTP requests; 504k rows across 216 countries in 6.6 s; vectorized annual→monthly expansion (`merge_asof`) |
 | Article tagging: 1 LLM call/article → rules + 20-article batches | 15 → 300 LLM-refined articles/day within the same quota; 100% of articles tagged immediately |

@@ -77,7 +77,11 @@ class DuckDBStore:
 
 class BigQueryStore:
     """Production backend. Assumes infra/main.tf already created the dataset and
-    tables with a schema matching schema.py — this class only reads/writes rows."""
+    tables with a schema matching schema.py — this class only reads/writes rows.
+    Reads use the BigQuery Storage Read API (Arrow streams) when
+    google-cloud-bigquery-storage is installed, instead of paginated REST JSON."""
+
+    supports_concurrent_queries = True  # the client is thread-safe
 
     def __init__(self, project: str, dataset: str):
         from google.cloud import bigquery

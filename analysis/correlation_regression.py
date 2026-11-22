@@ -67,21 +67,38 @@ def _in_list(values) -> str:
     return ", ".join(f"'{v}'" for v in values)
 
 
-def _fetch_frames(store, country_codes, sector_ids) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+MACRO_COLUMNS = ["country_code", "date_key", "indicator_id", "value_change"]
+
+
+def load_macro(store) -> pd.DataFrame:
+    """Every macro row (country series and the global FRED series), read once
+    by the monthly job and shared by the correlation batch and the forecast."""
+    return store.query_df(f"SELECT {', '.join(MACRO_COLUMNS)} FROM fact_macro_indicator")
+
+
+def _fetch_frames(store, country_codes, sector_ids, macro: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Three queries total, however many pairs — on BigQuery each query is a
     round-trip plus a 10 MB minimum billed scan, so the batch job fetching
-    once and slicing in pandas beats three queries per pair."""
-    macro = store.query_df(
-        "SELECT country_code, date_key, indicator_id, value_change FROM fact_macro_indicator "
-        f"WHERE country_code IN ({_in_list(country_codes)})"
-    )
-    price = store.query_df(
-        f"SELECT sector_id, date_key, price_change FROM fact_commodity_price WHERE sector_id IN ({_in_list(sector_ids)})"
-    )
-    valuation = store.query_df(
-        f"SELECT sector_id, date_key, valuation_change FROM fact_equity_valuation WHERE sector_id IN ({_in_list(sector_ids)})"
-    )
-    return macro, price, valuation
+    once and slicing in pandas beats three queries per pair. A preloaded
+    `macro` frame (see load_macro) replaces the macro query. On BigQuery the
+    queries run concurrently: they are network-bound, so threads overlap the
+    waits (DuckDB shares one connection, so it stays sequential)."""
+    queries = {
+        "price": f"SELECT sector_id, date_key, price_change FROM fact_commodity_price WHERE sector_id IN ({_in_list(sector_ids)})",
+        "valuation": f"SELECT sector_id, date_key, valuation_change FROM fact_equity_valuation WHERE sector_id IN ({_in_list(sector_ids)})",
+    }
+    if macro is None:
+        queries["macro"] = (f"SELECT {', '.join(MACRO_COLUMNS)} FROM fact_macro_indicator "
+                            f"WHERE country_code IN ({_in_list(country_codes)})")
+    if getattr(store, "supports_concurrent_queries", False):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+            frames = dict(zip(queries, pool.map(store.query_df, queries.values())))
+    else:
+        frames = {name: store.query_df(sql) for name, sql in queries.items()}
+    if macro is not None:
+        frames["macro"] = macro[macro["country_code"].isin(list(country_codes))][MACRO_COLUMNS]
+    return frames["macro"], frames["price"], frames["valuation"]
 
 
 def _country_wide(macro: pd.DataFrame) -> pd.DataFrame:
@@ -110,11 +127,11 @@ def build_country_panel(store, country_code: str, sector_id: str) -> pd.DataFram
     return _join_panel(_country_wide(macro), *_sector_targets(price, valuation, sector_id))
 
 
-def load_panels(store, pairs) -> dict[tuple[str, str], pd.DataFrame]:
+def load_panels(store, pairs, macro: pd.DataFrame | None = None) -> dict[tuple[str, str], pd.DataFrame]:
     """Every pair's panel from one bulk fetch (see _fetch_frames). Pivots once
     per country and slices once per sector — pairs share both — instead of
     re-scanning the full macro table for each of the ~10^3 pairs."""
-    macro, price, valuation = _fetch_frames(store, sorted({c for c, _ in pairs}), sorted({s for _, s in pairs}))
+    macro, price, valuation = _fetch_frames(store, sorted({c for c, _ in pairs}), sorted({s for _, s in pairs}), macro)
     wide = {cc: _country_wide(g) for cc, g in macro.groupby("country_code", sort=False)}
     targets = {sid: _sector_targets(price, valuation, sid) for sid in {s for _, s in pairs}}
     return {(c, s): _join_panel(wide[c], *targets[s]) if c in wide else pd.DataFrame() for c, s in pairs}
@@ -351,12 +368,12 @@ def run_one(store, country_code: str, sector_id: str, rate_basis: str, target_va
     }
 
 
-def run_analysis(controls: list[str] | None = None) -> dict:
+def run_analysis(controls: list[str] | None = None, macro: pd.DataFrame | None = None) -> dict:
     """controls: explicit override applied to every pair — leave None (the
     normal path) to let each pair pick its own best control dynamically."""
     store = get_store()
     results = []
-    panels = load_panels(store, COUNTRY_SECTOR_PAIRS)
+    panels = load_panels(store, COUNTRY_SECTOR_PAIRS, macro)
 
     for (country_code, sector_id), panel in panels.items():
         if panel.empty or len(panel) < MIN_OBS:
@@ -387,12 +404,13 @@ def run_analysis(controls: list[str] | None = None) -> dict:
 
 
 if __name__ == "__main__":
-    run_analysis()
+    macro = load_macro(get_store())  # one read, shared with the forecast below
+    run_analysis(macro=macro)
     # The hike forecast needs scikit-learn (analysis image only), so it is
     # imported here rather than at module level, where api/main.py imports
     # this module. A forecast failure must not fail the correlation batch.
     try:
         from analysis.forecast import run_forecast
-        run_forecast()
+        run_forecast(macro=macro)
     except Exception:
         log.exception("Hike forecast failed; correlation results were still written")
