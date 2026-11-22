@@ -305,7 +305,7 @@ Policy direction is forecastable; magnitude is not, beyond a marginal gain. Tree
 | API cold start: startup CPU boost, request-based CPU, `scipy.special` instead of `scipy.stats`, one-instance wake-up before parallel fetches | First response after idle 13–17 s → 9.5–11.2 s (production logs); the remainder is container start for the 270 MB image |
 | BigQuery reads via the Storage Read API (`google-cloud-bigquery-storage`, Arrow streams) instead of paginated REST JSON | Full macro table (528,877 rows) 15.7 s → 2.3 s (6.8×) |
 | Analysis job reads the macro table once and shares it between the correlation batch and the forecast; remaining queries run concurrently on threads | One full-table read per run instead of two, with identical results |
-| Analysis image installs only what the job imports (`requirements-analysis.txt`: no API server, feed/LLM/export libraries or DuckDB) | Dependencies 74 → 42 packages (635 MB → 527 MB), for faster job cold starts |
+| Analysis image installs only what the job imports (`requirements-analysis.txt`: no API server, feed/LLM/export libraries or DuckDB) | Dependencies 74 → 42 packages (635 MB → 527 MB); image 287 MB → 215 MB. With the two rows above, the production job runs in 142 s instead of 197–248 s (correlation phase 49 s → 16 s) |
 | Feed ingest fetches the 11 feeds concurrently (threads; each fetch is a network wait) | 8.3 s → 1.2 s |
 | Per-pair queries → one bulk fetch, pivot per country | 3 warehouse queries per batch instead of 3 per pair; panel build 25.2 s → 1.9 s |
 | Macro ingest: per-country → bulk all-country requests | ~120 → 11 HTTP requests; 504k rows across 216 countries in 6.6 s; vectorized annual→monthly expansion (`merge_asof`) |
